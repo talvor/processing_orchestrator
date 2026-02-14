@@ -1,7 +1,8 @@
-package workflow
+package orchestrator
 
 import (
 	"testing"
+
 	"processing_pipeline/dag"
 )
 
@@ -18,4 +19,3 @@ func TestWorkflowOrchestrator_Execute(t *testing.T) {
 		t.Errorf("WorkflowOrchestrator failed: %v", err)
 	}
 }
-

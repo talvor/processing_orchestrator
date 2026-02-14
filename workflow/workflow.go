@@ -4,11 +4,12 @@ import (
 	"fmt"
 
 	"processing_pipeline/dag"
+	"processing_pipeline/orchestrator"
 )
 
 type Workflow struct {
 	Dag          *dag.DAG
-	Orchestrator *WorkflowOrchestrator
+	Orchestrator *orchestrator.Orchestrator
 	Job          any
 }
 
@@ -17,10 +18,9 @@ func NewWorkflow(filename string) (*Workflow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	orchestrator := NewWorkflowOrchestrator(dag)
+	orchestrator := orchestrator.NewOrchestrator(dag)
 
 	return &Workflow{
-		// Config:       config,
 		Dag:          dag,
 		Orchestrator: orchestrator,
 		Job:          nil,

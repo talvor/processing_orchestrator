@@ -1,4 +1,5 @@
-package workflow
+// Package orchestrator implements the core logic for executing a workflow defined as a DAG (Directed Acyclic Graph). It handles node execution, dependency resolution, precondition checks, and retry policies.“
+package orchestrator
 
 import (
 	"fmt"
@@ -9,15 +10,15 @@ import (
 	"processing_pipeline/dag"
 )
 
-type WorkflowOrchestrator struct {
+type Orchestrator struct {
 	Dag *dag.DAG
 }
 
-func NewWorkflowOrchestrator(dag *dag.DAG) *WorkflowOrchestrator {
-	return &WorkflowOrchestrator{Dag: dag}
+func NewOrchestrator(dag *dag.DAG) *Orchestrator {
+	return &Orchestrator{Dag: dag}
 }
 
-func (wo *WorkflowOrchestrator) Execute() error {
+func (wo *Orchestrator) Execute() error {
 	completed := make(map[string]bool)
 	start := time.Now()
 
@@ -33,7 +34,7 @@ func (wo *WorkflowOrchestrator) Execute() error {
 	return nil
 }
 
-func (wo *WorkflowOrchestrator) executeNode(nodeName string, completed map[string]bool) error {
+func (wo *Orchestrator) executeNode(nodeName string, completed map[string]bool) error {
 	if completed[nodeName] {
 		return nil // Node already processed
 	}
@@ -56,7 +57,7 @@ func (wo *WorkflowOrchestrator) executeNode(nodeName string, completed map[strin
 		output, err := cmd.Output()
 		actual := strings.TrimSpace(string(output))
 		if err != nil || actual != precondition.Expected {
-			return fmt.Errorf("Precondition failed for node '%s': expected '%s', got '%s'\n", node.Name, precondition.Expected, actual)
+			return fmt.Errorf("precondition failed for node '%s': expected '%s', got '%s'", node.Name, precondition.Expected, actual)
 		}
 	}
 
