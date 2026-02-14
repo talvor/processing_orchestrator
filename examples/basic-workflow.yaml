@@ -1,11 +1,14 @@
 # Example Workflow Configuration File
 
+name: minimal configuration
 steps:
-  - name: "step1"
-    command: "echo 'Step 1'; sleep 1"
-
-  - name: "step2"
-    command: "echo 'Step 2'; sleep 2"
-
-  - name: "step3"
-    command: "echo 'Step 3'; sleep 3"
+  - name: step2
+    command: "sleep 2; echo 'step 2'"
+  - name: step3
+    command: "sleep 3; echo 'Step 3'"
+    depends:
+      - step1
+  - name: step1
+    command: "sleep 1; echo 'step 1'"
+    depends:
+      - step2
