@@ -2,7 +2,7 @@ package workflow
 
 import (
 	"testing"
-	"processing_orchestrator/dag"
+	"processing_pipeline/dag"
 )
 
 func TestWorkflowOrchestrator_Execute(t *testing.T) {

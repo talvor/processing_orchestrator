@@ -41,7 +41,7 @@ steps:
 2. Run the `process` command with the path to your configuration:
 
 ```bash
-processing_orchestrator process path/to/workflow.yaml
+processing_pipeline process path/to/workflow.yaml
 ```
 
 ## Example Workflow

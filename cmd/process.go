@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"processing_orchestrator/workflow"
+	"processing_pipeline/workflow"
 
 	"github.com/spf13/cobra"
 )

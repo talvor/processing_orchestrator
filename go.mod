@@ -1,4 +1,4 @@
-module processing_orchestrator
+module processing_pipeline
 
 go 1.25.4
 

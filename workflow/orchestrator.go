@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"processing_orchestrator/dag"
+	"processing_pipeline/dag"
 )
 
 type WorkflowOrchestrator struct {
