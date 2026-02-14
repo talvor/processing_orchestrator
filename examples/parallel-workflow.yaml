@@ -1,0 +1,17 @@
+steps:
+  - name: "Step 1"
+    command: "echo 'Executing Step 1'; sleep 1"
+
+  - name: "Step 2"
+    command: "echo 'Executing Step 2'; sleep 2"
+    parallel: true
+
+  - name: "Step 3"
+    command: "echo 'Executing Step 3'; sleep 3"
+    parallel: true
+
+  - name: "Step 4"
+    command: "echo 'Executing Step 4 after Step 2 and Step 3'; sleep 4"
+    dependsOn:
+      - "Step 2"
+      - "Step 3"
