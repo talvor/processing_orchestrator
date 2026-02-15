@@ -24,8 +24,10 @@ const (
 	symbolFailedContinue = "⚠" // Yellow warning
 	symbolSkipped        = "○" // Gray circle
 	symbolPending        = "◯" // Cyan empty circle
-	symbolInProgress     = "◐" // Cyan half circle
 )
+
+// Spinner frames for in-progress status
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // TreeLogger displays execution status as a dependency tree with live updates
 type TreeLogger struct {
@@ -33,6 +35,7 @@ type TreeLogger struct {
 	mu             sync.Mutex
 	lastStates     map[string]*NodeStateSnapshot
 	lastDAG        *DAGSnapshot
+	spinnerIndex   int // Current index in the spinner frames
 }
 
 func NewTreeLogger() *TreeLogger {
@@ -79,6 +82,9 @@ func (t *TreeLogger) OnStatusUpdate(states map[string]*NodeStateSnapshot, dag *D
 
 	t.lastStates = states
 	t.lastDAG = dag
+
+	// Advance spinner frame
+	t.spinnerIndex = (t.spinnerIndex + 1) % len(spinnerFrames)
 
 	t.displayStatus()
 }
@@ -155,7 +161,7 @@ func (t *TreeLogger) displayStatus() {
 		var symbol, color, status, duration string
 
 		if state.InProgress {
-			symbol = symbolInProgress
+			symbol = spinnerFrames[t.spinnerIndex]
 			color = colorCyan
 			status = "in progress"
 			duration = fmt.Sprintf("(%s)", time.Since(state.StartTime).Round(100*time.Millisecond))
