@@ -116,9 +116,17 @@ func (s *StreamLogger) OnNodeEvent(data NodeEventData) {
 
 	case EventNodeSkipped:
 		if s.colorized {
-			fmt.Printf("%s%s○ %s%s skipped\n", timestamp, streamColorGray, data.NodeName, streamColorReset)
+			if data.SkipReason != "" {
+				fmt.Printf("%s%s○ %s%s skipped: %s\n", timestamp, streamColorGray, data.NodeName, streamColorReset, data.SkipReason)
+			} else {
+				fmt.Printf("%s%s○ %s%s skipped\n", timestamp, streamColorGray, data.NodeName, streamColorReset)
+			}
 		} else {
-			fmt.Printf("%s%s skipped\n", timestamp, data.NodeName)
+			if data.SkipReason != "" {
+				fmt.Printf("%s%s skipped: %s\n", timestamp, data.NodeName, data.SkipReason)
+			} else {
+				fmt.Printf("%s%s skipped\n", timestamp, data.NodeName)
+			}
 		}
 	}
 }
