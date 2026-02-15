@@ -12,6 +12,15 @@ import (
 	"processing_pipeline/dag"
 )
 
+// WhenConditionNotMetError is a special error type that indicates a when condition was not met
+type WhenConditionNotMetError struct {
+	Message string
+}
+
+func (e *WhenConditionNotMetError) Error() string {
+	return e.Message
+}
+
 type Orchestrator struct {
 	Dag         *dag.DAG
 	WorkerCount int             // Maximum number of concurrent workers
@@ -332,6 +341,28 @@ func (wo *Orchestrator) Execute() error {
 						state.error = err
 						state.inProgress = false
 
+						// Check if this is a when condition not met (should be treated as skip)
+						if _, isWhenConditionNotMet := err.(*WhenConditionNotMetError); isWhenConditionNotMet {
+							state.skipped = true
+							state.completed = true
+							state.mu.Unlock()
+
+							// Log skip event (due to when condition)
+							wo.logNodeEvent(name, EventNodeSkipped, state)
+
+							completedMu.Lock()
+							completedCount++
+							if completedCount == totalNodes {
+								cancel() // Signal completion
+							}
+							completedMu.Unlock()
+
+							// Check which descendants should be skipped
+							checkAndSkipDescendants(name)
+
+							return
+						}
+
 						// Check if this node has ContinueOnError
 						if node.ContinueOnError {
 							state.failedContinue = true
@@ -487,7 +518,9 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 
 		actual := strings.TrimSpace(string(output))
 		if err != nil || actual != expected {
-			return fmt.Errorf("when condition failed: expected '%s', got '%s'", expected, actual)
+			return &WhenConditionNotMetError{
+				Message: fmt.Sprintf("when condition not met: expected '%s', got '%s'", expected, actual),
+			}
 		}
 	}
 
