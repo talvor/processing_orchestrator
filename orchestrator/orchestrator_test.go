@@ -123,3 +123,66 @@ func TestWhenConditionWithContinueOnError(t *testing.T) {
 		t.Errorf("Expected workflow to succeed when condition not met, but got error: %v", err)
 	}
 }
+
+// TestContinueOnErrorSkipsDescendants tests that when a node fails with continue_on_error,
+// its descendants are skipped with appropriate reason
+func TestContinueOnErrorSkipsDescendants(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {Name: "A", Command: "echo A"},
+			"B": {
+				Name:            "B",
+				Command:         "false", // This command will fail
+				Depends:         []string{"A"},
+				ContinueOnError: true,
+			},
+			"C": {
+				Name:    "C",
+				Command: "echo C",
+				Depends: []string{"B"},
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.Execute()
+
+	// Should not fail - continue_on_error should allow workflow to complete
+	if err != nil {
+		t.Errorf("Expected workflow to succeed with continue_on_error, but got error: %v", err)
+	}
+}
+
+// TestFailedParentSkipsDescendants tests that when a node fails without continue_on_error,
+// its descendants are skipped
+func TestFailedParentSkipsDescendants(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {Name: "A", Command: "echo A"},
+			"B": {
+				Name:            "B",
+				Command:         "false", // This command will fail
+				Depends:         []string{"A"},
+				ContinueOnError: false,
+			},
+			"C": {
+				Name:    "C",
+				Command: "echo C",
+				Depends: []string{"B"},
+			},
+			"D": {
+				Name:    "D",
+				Command: "echo D",
+				Depends: []string{"A"}, // Does not depend on B, should still execute
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.Execute()
+
+	// Should fail because B fails without continue_on_error
+	if err == nil {
+		t.Errorf("Expected workflow to fail, but it succeeded")
+	}
+}

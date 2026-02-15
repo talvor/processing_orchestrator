@@ -21,12 +21,13 @@ const (
 
 // NodeEventData contains information about a node execution event
 type NodeEventData struct {
-	NodeName  string
-	Event     ExecutionEvent
-	StartTime time.Time
-	EndTime   time.Time
-	Duration  time.Duration
-	Error     error
+	NodeName   string
+	Event      ExecutionEvent
+	StartTime  time.Time
+	EndTime    time.Time
+	Duration   time.Duration
+	Error      error
+	SkipReason string // Reason for skipping (e.g., "when condition not met", "parent failed")
 }
 
 // WorkflowEventData contains information about workflow-level events

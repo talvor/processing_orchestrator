@@ -100,17 +100,18 @@ func (wo *Orchestrator) createStateSnapshot(nodeStates map[string]*nodeState) ma
 }
 
 // Helper to safely call logger methods
-func (wo *Orchestrator) logNodeEvent(nodeName string, event ExecutionEvent, state *nodeState) {
+func (wo *Orchestrator) logNodeEvent(nodeName string, event ExecutionEvent, state *nodeState, skipReason string) {
 	if wo.logger == nil {
 		return
 	}
 
 	data := NodeEventData{
-		NodeName:  nodeName,
-		Event:     event,
-		StartTime: state.startTime,
-		EndTime:   state.endTime,
-		Error:     state.error,
+		NodeName:   nodeName,
+		Event:      event,
+		StartTime:  state.startTime,
+		EndTime:    state.endTime,
+		Error:      state.error,
+		SkipReason: skipReason,
 	}
 	if !state.endTime.IsZero() && !state.startTime.IsZero() {
 		data.Duration = state.endTime.Sub(state.startTime)
@@ -214,6 +215,48 @@ func (wo *Orchestrator) Execute() error {
 		return len(node.Depends) > 0
 	}
 
+	// Helper function to determine skip reason based on dependencies
+	getSkipReason := func(nodeName string) string {
+		node := wo.Dag.Nodes[nodeName]
+		var failedDeps []string
+		var failedContinueDeps []string
+		var skippedDeps []string
+
+		for _, dep := range node.Depends {
+			depState := nodeStates[dep]
+			depState.mu.Lock()
+			if depState.failed {
+				failedDeps = append(failedDeps, dep)
+			} else if depState.failedContinue {
+				failedContinueDeps = append(failedContinueDeps, dep)
+			} else if depState.skipped {
+				skippedDeps = append(skippedDeps, dep)
+			}
+			depState.mu.Unlock()
+		}
+
+		// Prioritize reason based on most severe failure
+		if len(failedDeps) > 0 {
+			if len(failedDeps) == 1 {
+				return fmt.Sprintf("parent failed: %s", failedDeps[0])
+			}
+			return fmt.Sprintf("parents failed: %s", strings.Join(failedDeps, ", "))
+		}
+		if len(failedContinueDeps) > 0 {
+			if len(failedContinueDeps) == 1 {
+				return fmt.Sprintf("parent failed (continuing): %s", failedContinueDeps[0])
+			}
+			return fmt.Sprintf("parents failed (continuing): %s", strings.Join(failedContinueDeps, ", "))
+		}
+		if len(skippedDeps) > 0 {
+			if len(skippedDeps) == 1 {
+				return fmt.Sprintf("parent skipped: %s", skippedDeps[0])
+			}
+			return fmt.Sprintf("parents skipped: %s", strings.Join(skippedDeps, ", "))
+		}
+		return "dependencies not met"
+	}
+
 	// Helper function to mark descendants that should be skipped
 	var checkAndSkipDescendants func(string)
 	checkAndSkipDescendants = func(nodeName string) {
@@ -234,8 +277,9 @@ func (wo *Orchestrator) Execute() error {
 				depState.completed = true
 				depState.mu.Unlock()
 
-				// Log skip event
-				wo.logNodeEvent(dependent, EventNodeSkipped, depState)
+				// Log skip event with reason
+				skipReason := getSkipReason(dependent)
+				wo.logNodeEvent(dependent, EventNodeSkipped, depState, skipReason)
 
 				completedMu.Lock()
 				completedCount++
@@ -288,8 +332,9 @@ func (wo *Orchestrator) Execute() error {
 					state.completed = true
 					state.mu.Unlock()
 
-					// Log skip event
-					wo.logNodeEvent(nodeName, EventNodeSkipped, state)
+					// Log skip event with reason
+					skipReason := getSkipReason(nodeName)
+					wo.logNodeEvent(nodeName, EventNodeSkipped, state, skipReason)
 
 					completedMu.Lock()
 					completedCount++
@@ -309,7 +354,7 @@ func (wo *Orchestrator) Execute() error {
 				state.mu.Unlock()
 
 				// Log start event
-				wo.logNodeEvent(nodeName, EventNodeStarted, state)
+				wo.logNodeEvent(nodeName, EventNodeStarted, state, "")
 
 				wg.Add(1)
 
@@ -348,7 +393,7 @@ func (wo *Orchestrator) Execute() error {
 							state.mu.Unlock()
 
 							// Log skip event (due to when condition)
-							wo.logNodeEvent(name, EventNodeSkipped, state)
+							wo.logNodeEvent(name, EventNodeSkipped, state, "when condition not met")
 
 							completedMu.Lock()
 							completedCount++
@@ -370,7 +415,7 @@ func (wo *Orchestrator) Execute() error {
 							state.mu.Unlock()
 
 							// Log failed-continue event
-							wo.logNodeEvent(name, EventNodeFailedContinue, state)
+							wo.logNodeEvent(name, EventNodeFailedContinue, state, "")
 
 							completedMu.Lock()
 							completedCount++
@@ -390,7 +435,7 @@ func (wo *Orchestrator) Execute() error {
 							state.mu.Unlock()
 
 							// Log failed event
-							wo.logNodeEvent(name, EventNodeFailed, state)
+							wo.logNodeEvent(name, EventNodeFailed, state, "")
 
 							errorMu.Lock()
 							if executionError == nil {
@@ -414,7 +459,7 @@ func (wo *Orchestrator) Execute() error {
 					state.mu.Unlock()
 
 					// Log completion event
-					wo.logNodeEvent(name, EventNodeCompleted, state)
+					wo.logNodeEvent(name, EventNodeCompleted, state, "")
 
 					// Update dependents and add newly ready nodes to queue
 					for _, dependent := range dependents[name] {
