@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,11 +20,16 @@ type Orchestrator struct {
 
 // nodeState tracks the execution state of each node
 type nodeState struct {
-	completed     bool
-	inProgress    bool
-	skipped       bool // Node was skipped due to parent failure
-	remainingDeps int
-	mu            sync.Mutex
+	completed      bool
+	inProgress     bool
+	skipped        bool // Node was skipped due to parent failure
+	failed         bool
+	failedContinue bool
+	remainingDeps  int
+	startTime      time.Time
+	endTime        time.Time
+	error          error
+	mu             sync.Mutex
 }
 
 // ANSI color codes
@@ -33,6 +39,7 @@ const (
 	colorRed    = "\033[31m"
 	colorYellow = "\033[33m"
 	colorGray   = "\033[90m"
+	colorCyan   = "\033[36m"
 )
 
 // Status symbols
@@ -41,6 +48,8 @@ const (
 	symbolFailed         = "✗" // Red X
 	symbolFailedContinue = "⚠" // Yellow warning
 	symbolSkipped        = "○" // Gray circle
+	symbolPending        = "◯" // Cyan empty circle
+	symbolInProgress     = "◐" // Cyan half circle
 )
 
 func NewOrchestrator(dag *dag.DAG) *Orchestrator {
@@ -67,10 +76,12 @@ func (wo *Orchestrator) Execute() error {
 
 	for name, node := range wo.Dag.Nodes {
 		nodeStates[name] = &nodeState{
-			completed:     false,
-			inProgress:    false,
-			skipped:       false,
-			remainingDeps: len(node.Depends),
+			completed:      false,
+			inProgress:     false,
+			skipped:        false,
+			failed:         false,
+			failedContinue: false,
+			remainingDeps:  len(node.Depends),
 		}
 
 		// Build reverse dependency map
@@ -103,33 +114,72 @@ func (wo *Orchestrator) Execute() error {
 	totalNodes := len(wo.Dag.Nodes)
 	var completedMu sync.Mutex
 
-	// Helper function to skip a node and all its descendants
-	var skipDescendants func(string)
-	skipDescendants = func(nodeName string) {
+	// Display update ticker
+	displayTicker := time.NewTicker(100 * time.Millisecond)
+	defer displayTicker.Stop()
+	displayDone := make(chan struct{})
+
+	// Start display updater
+	go func() {
+		for {
+			select {
+			case <-displayTicker.C:
+				wo.displayStatus(nodeStates)
+			case <-displayDone:
+				return
+			}
+		}
+	}()
+
+	// Helper function to check if a node should be skipped
+	shouldSkipNode := func(nodeName string) bool {
+		node := wo.Dag.Nodes[nodeName]
+		// A node should be skipped only if ALL of its dependencies are failed/skipped
+		for _, dep := range node.Depends {
+			depState := nodeStates[dep]
+			depState.mu.Lock()
+			isDepSuccessful := depState.completed && !depState.failed && !depState.failedContinue && !depState.skipped
+			depState.mu.Unlock()
+
+			// If any dependency succeeded, don't skip this node
+			if isDepSuccessful {
+				return false
+			}
+		}
+		// All dependencies are failed/skipped, so skip this node
+		return len(node.Depends) > 0
+	}
+
+	// Helper function to mark descendants that should be skipped
+	var checkAndSkipDescendants func(string)
+	checkAndSkipDescendants = func(nodeName string) {
 		for _, dependent := range dependents[nodeName] {
 			depState := nodeStates[dependent]
 			depState.mu.Lock()
 
-			if depState.completed || depState.skipped {
+			if depState.completed || depState.skipped || depState.inProgress {
 				depState.mu.Unlock()
 				continue
 			}
 
-			depState.skipped = true
-			depState.completed = true
+			// Check if this dependent should be skipped
 			depState.mu.Unlock()
+			if shouldSkipNode(dependent) {
+				depState.mu.Lock()
+				depState.skipped = true
+				depState.completed = true
+				depState.mu.Unlock()
 
-			fmt.Printf("%s%s%s %s (0s)\n", colorGray, symbolSkipped, colorReset, dependent)
+				completedMu.Lock()
+				completedCount++
+				if completedCount == totalNodes {
+					cancel() // Signal completion
+				}
+				completedMu.Unlock()
 
-			completedMu.Lock()
-			completedCount++
-			if completedCount == totalNodes {
-				cancel() // Signal completion
+				// Recursively check descendants
+				checkAndSkipDescendants(dependent)
 			}
-			completedMu.Unlock()
-
-			// Recursively skip descendants
-			skipDescendants(dependent)
 		}
 	}
 
@@ -163,7 +213,29 @@ func (wo *Orchestrator) Execute() error {
 					continue
 				}
 
+				// Check if this node should be skipped due to failed dependencies
+				state.mu.Unlock()
+				if shouldSkipNode(nodeName) {
+					state.mu.Lock()
+					state.skipped = true
+					state.completed = true
+					state.mu.Unlock()
+
+					completedMu.Lock()
+					completedCount++
+					if completedCount == totalNodes {
+						cancel()
+					}
+					completedMu.Unlock()
+
+					// Check descendants
+					checkAndSkipDescendants(nodeName)
+					continue
+				}
+				state.mu.Lock()
+
 				state.inProgress = true
+				state.startTime = time.Now()
 				state.mu.Unlock()
 
 				wg.Add(1)
@@ -187,21 +259,19 @@ func (wo *Orchestrator) Execute() error {
 					}
 
 					node := wo.Dag.Nodes[name]
-					nodeStart := time.Now()
 
 					// Execute the node
 					if err := wo.executeNodeWithContext(ctx, name); err != nil {
-						nodeDuration := time.Since(nodeStart)
+						state := nodeStates[name]
+						state.mu.Lock()
+						state.endTime = time.Now()
+						state.error = err
+						state.inProgress = false
 
 						// Check if this node has ContinueOnError
 						if node.ContinueOnError {
-							fmt.Printf("%s%s%s %s (%s) - %v\n", colorYellow, symbolFailedContinue, colorReset, name, nodeDuration, err)
-
-							// Mark this node as completed (with error)
-							state := nodeStates[name]
-							state.mu.Lock()
+							state.failedContinue = true
 							state.completed = true
-							state.inProgress = false
 							state.mu.Unlock()
 
 							completedMu.Lock()
@@ -211,13 +281,15 @@ func (wo *Orchestrator) Execute() error {
 							}
 							completedMu.Unlock()
 
-							// Skip all descendants
-							skipDescendants(name)
+							// Check which descendants should be skipped
+							checkAndSkipDescendants(name)
 
 							return
 						} else {
 							// Fatal error - stop entire workflow
-							fmt.Printf("%s%s%s %s (%s) - %v\n", colorRed, symbolFailed, colorReset, name, nodeDuration, err)
+							state.failed = true
+							state.completed = true
+							state.mu.Unlock()
 
 							errorMu.Lock()
 							if executionError == nil {
@@ -226,13 +298,6 @@ func (wo *Orchestrator) Execute() error {
 							}
 							errorMu.Unlock()
 
-							// Mark as completed even on error
-							state := nodeStates[name]
-							state.mu.Lock()
-							state.completed = true
-							state.inProgress = false
-							state.mu.Unlock()
-
 							completedMu.Lock()
 							completedCount++
 							completedMu.Unlock()
@@ -240,12 +305,9 @@ func (wo *Orchestrator) Execute() error {
 						}
 					}
 
-					nodeDuration := time.Since(nodeStart)
-					fmt.Printf("%s%s%s %s (%s)\n", colorGreen, symbolSuccess, colorReset, name, nodeDuration)
-
-					// Mark as completed successfully
 					state := nodeStates[name]
 					state.mu.Lock()
+					state.endTime = time.Now()
 					state.completed = true
 					state.inProgress = false
 					state.mu.Unlock()
@@ -286,6 +348,10 @@ func (wo *Orchestrator) Execute() error {
 	close(readyQueue)
 	wg.Wait()
 
+	// Stop display updater and show final status
+	close(displayDone)
+	wo.displayStatus(nodeStates)
+
 	duration := time.Since(start)
 
 	if executionError != nil {
@@ -295,6 +361,139 @@ func (wo *Orchestrator) Execute() error {
 
 	fmt.Printf("\nWorkflow completed successfully in %s\n", duration)
 	return nil
+}
+
+func (wo *Orchestrator) displayStatus(nodeStates map[string]*nodeState) {
+	// Clear screen and move cursor to top
+	fmt.Print("\033[2J\033[H")
+
+	// Build dependency tree structure
+	type nodeDisplay struct {
+		name     string
+		state    *nodeState
+		children []*nodeDisplay
+		level    int
+	}
+
+	// Find root nodes (no dependencies)
+	roots := []*nodeDisplay{}
+	nodeDisplayMap := make(map[string]*nodeDisplay)
+
+	// Create all node displays
+	for name := range wo.Dag.Nodes {
+		nodeDisplayMap[name] = &nodeDisplay{
+			name:     name,
+			state:    nodeStates[name],
+			children: []*nodeDisplay{},
+		}
+	}
+
+	// Build tree structure
+	for name, node := range wo.Dag.Nodes {
+		if len(node.Depends) == 0 {
+			roots = append(roots, nodeDisplayMap[name])
+		} else {
+			// Add as child to all dependencies
+			for _, dep := range node.Depends {
+				if parent, exists := nodeDisplayMap[dep]; exists {
+					parent.children = append(parent.children, nodeDisplayMap[name])
+				}
+			}
+		}
+	}
+
+	// Sort roots by name for consistent display
+	sort.Slice(roots, func(i, j int) bool {
+		return roots[i].name < roots[j].name
+	})
+
+	// Display the tree
+	fmt.Println("Workflow Execution Status:")
+	fmt.Println()
+
+	visited := make(map[string]bool)
+	var displayNode func(*nodeDisplay, string, bool)
+	displayNode = func(node *nodeDisplay, prefix string, isLast bool) {
+		if visited[node.name] {
+			return
+		}
+		visited[node.name] = true
+
+		state := node.state
+		state.mu.Lock()
+		defer state.mu.Unlock()
+
+		// Determine status symbol and color
+		var symbol, color, status, duration string
+
+		if state.inProgress {
+			symbol = symbolInProgress
+			color = colorCyan
+			status = "in progress"
+			duration = fmt.Sprintf("(%s)", time.Since(state.startTime).Round(100*time.Millisecond))
+		} else if state.completed && !state.failed && !state.failedContinue && !state.skipped {
+			symbol = symbolSuccess
+			color = colorGreen
+			status = "success"
+			duration = fmt.Sprintf("(%s)", state.endTime.Sub(state.startTime).Round(100*time.Millisecond))
+		} else if state.failed {
+			symbol = symbolFailed
+			color = colorRed
+			status = fmt.Sprintf("failed - %v", state.error)
+			duration = fmt.Sprintf("(%s)", state.endTime.Sub(state.startTime).Round(100*time.Millisecond))
+		} else if state.failedContinue {
+			symbol = symbolFailedContinue
+			color = colorYellow
+			status = fmt.Sprintf("failed (continuing) - %v", state.error)
+			duration = fmt.Sprintf("(%s)", state.endTime.Sub(state.startTime).Round(100*time.Millisecond))
+		} else if state.skipped {
+			symbol = symbolSkipped
+			color = colorGray
+			status = "skipped"
+			duration = ""
+		} else {
+			symbol = symbolPending
+			color = colorGray
+			status = "pending"
+			duration = ""
+		}
+
+		// Draw tree structure
+		connector := "├─"
+		if isLast {
+			connector = "└─"
+		}
+
+		if prefix == "" {
+			fmt.Printf("%s%s%s %s %s %s\n", color, symbol, colorReset, node.name, duration, status)
+		} else {
+			fmt.Printf("%s%s %s%s%s %s %s %s\n", prefix, connector, color, symbol, colorReset, node.name, duration, status)
+		}
+
+		// Sort children by name for consistent display
+		sort.Slice(node.children, func(i, j int) bool {
+			return node.children[i].name < node.children[j].name
+		})
+
+		// Display children
+		for i, child := range node.children {
+			childPrefix := prefix
+			if prefix == "" {
+				childPrefix = "  "
+			} else {
+				if isLast {
+					childPrefix += "   "
+				} else {
+					childPrefix += "│  "
+				}
+			}
+			displayNode(child, childPrefix, i == len(node.children)-1)
+		}
+	}
+
+	for i, root := range roots {
+		displayNode(root, "", i == len(roots)-1)
+	}
 }
 
 func replaceParams(input string, params map[string]string) string {
@@ -330,7 +529,7 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 
 		actual := strings.TrimSpace(string(output))
 		if err != nil || actual != expected {
-			return fmt.Errorf("'when' condition failed for node '%s': expected '%s', got '%s'", node.Name, expected, actual)
+			return fmt.Errorf("when condition failed: expected '%s', got '%s'", expected, actual)
 		}
 	}
 
@@ -348,7 +547,7 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 
 		actual := strings.TrimSpace(string(output))
 		if err != nil || actual != expected {
-			return fmt.Errorf("'pre' condition failed for node '%s': expected '%s', got '%s'", node.Name, expected, actual)
+			return fmt.Errorf("precondition failed: expected '%s', got '%s'", expected, actual)
 		}
 	}
 
@@ -363,7 +562,7 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 	for attempt := 0; attempt <= retries; attempt++ {
 		// Check if context was cancelled before attempting
 		if ctx.Err() != nil {
-			return fmt.Errorf("node '%s' cancelled", node.Name)
+			return fmt.Errorf("cancelled")
 		}
 
 		cmd := exec.CommandContext(ctx, "sh", "-c", replacedCommand)
@@ -373,11 +572,11 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 		if err := cmd.Run(); err != nil {
 			// Check if error was due to context cancellation
 			if ctx.Err() != nil {
-				return fmt.Errorf("node '%s' cancelled", node.Name)
+				return fmt.Errorf("cancelled")
 			}
 
 			if attempt == retries {
-				return fmt.Errorf("node '%s' failed after %d attempts: %w", node.Name, retries+1, err)
+				return fmt.Errorf("failed after %d attempts: %w", retries+1, err)
 			}
 			continue
 		}
