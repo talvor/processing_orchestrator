@@ -19,7 +19,7 @@ steps:
       - "Initialize"
     when:
       predicate: "echo $2"
-      expected: foo
+      expected: bar
     continue_on_error: true
   - name: "Update TAB_2"
     description: "Update TAB_2"

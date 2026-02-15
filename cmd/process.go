@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"processing_pipeline/orchestrator"
 	"processing_pipeline/workflow"
 
 	"github.com/spf13/cobra"
@@ -31,6 +32,10 @@ to quickly create a Cobra application.`,
 			os.Exit(1)
 		}
 
+		if cmd.Flag("logger").Value.String() == "tree" {
+			w.Orchestrator.SetLogger(orchestrator.NewTreeLogger())
+		}
+
 		err = w.Orchestrator.Execute()
 		if err != nil {
 			fmt.Printf("Workflow execution failed: %v\n", err)
@@ -42,13 +47,6 @@ to quickly create a Cobra application.`,
 func init() {
 	rootCmd.AddCommand(processCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// processCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// processCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// Here you define flags and configuration settings.
+	processCmd.Flags().StringP("logger", "l", "stream", "Set the logger to use ('stream' or 'tree')")
 }

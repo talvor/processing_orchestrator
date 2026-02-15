@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +14,8 @@ import (
 
 type Orchestrator struct {
 	Dag         *dag.DAG
-	WorkerCount int // Maximum number of concurrent workers
+	WorkerCount int             // Maximum number of concurrent workers
+	logger      ExecutionLogger // Pluggable logger
 }
 
 // nodeState tracks the execution state of each node
@@ -32,30 +32,11 @@ type nodeState struct {
 	mu             sync.Mutex
 }
 
-// ANSI color codes
-const (
-	colorReset  = "\033[0m"
-	colorGreen  = "\033[32m"
-	colorRed    = "\033[31m"
-	colorYellow = "\033[33m"
-	colorGray   = "\033[90m"
-	colorCyan   = "\033[36m"
-)
-
-// Status symbols
-const (
-	symbolSuccess        = "✓" // Green checkmark
-	symbolFailed         = "✗" // Red X
-	symbolFailedContinue = "⚠" // Yellow warning
-	symbolSkipped        = "○" // Gray circle
-	symbolPending        = "◯" // Cyan empty circle
-	symbolInProgress     = "◐" // Cyan half circle
-)
-
 func NewOrchestrator(dag *dag.DAG) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
-		WorkerCount: 5, // Default worker count
+		WorkerCount: 5,                 // Default worker count
+		logger:      NewStreamLogger(), // Default to stream logger
 	}
 }
 
@@ -64,11 +45,83 @@ func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
 		WorkerCount: workerCount,
+		logger:      NewStreamLogger(),
 	}
+}
+
+// SetLogger configures the logger for the orchestrator
+func (wo *Orchestrator) SetLogger(logger ExecutionLogger) {
+	wo.logger = logger
+}
+
+// Helper to create DAG snapshot for loggers
+func (wo *Orchestrator) createDAGSnapshot() *DAGSnapshot {
+	snapshot := &DAGSnapshot{
+		Nodes: make(map[string]*NodeSnapshot),
+	}
+
+	for name, node := range wo.Dag.Nodes {
+		snapshot.Nodes[name] = &NodeSnapshot{
+			Name:    node.Name,
+			Depends: node.Depends,
+		}
+	}
+
+	return snapshot
+}
+
+// Helper to create state snapshots for loggers
+func (wo *Orchestrator) createStateSnapshot(nodeStates map[string]*nodeState) map[string]*NodeStateSnapshot {
+	snapshots := make(map[string]*NodeStateSnapshot)
+	for name, state := range nodeStates {
+		state.mu.Lock()
+		snapshots[name] = &NodeStateSnapshot{
+			Completed:      state.completed,
+			InProgress:     state.inProgress,
+			Skipped:        state.skipped,
+			Failed:         state.failed,
+			FailedContinue: state.failedContinue,
+			StartTime:      state.startTime,
+			EndTime:        state.endTime,
+			Error:          state.error,
+		}
+		state.mu.Unlock()
+	}
+	return snapshots
+}
+
+// Helper to safely call logger methods
+func (wo *Orchestrator) logNodeEvent(nodeName string, event ExecutionEvent, state *nodeState) {
+	if wo.logger == nil {
+		return
+	}
+
+	data := NodeEventData{
+		NodeName:  nodeName,
+		Event:     event,
+		StartTime: state.startTime,
+		EndTime:   state.endTime,
+		Error:     state.error,
+	}
+	if !state.endTime.IsZero() && !state.startTime.IsZero() {
+		data.Duration = state.endTime.Sub(state.startTime)
+	}
+
+	wo.logger.OnNodeEvent(data)
 }
 
 func (wo *Orchestrator) Execute() error {
 	start := time.Now()
+	dagSnapshot := wo.createDAGSnapshot()
+
+	// Notify logger of workflow start
+	if wo.logger != nil {
+		wo.logger.OnWorkflowStart(WorkflowEventData{
+			Event:      EventWorkflowStarted,
+			StartTime:  start,
+			TotalNodes: len(wo.Dag.Nodes),
+		})
+	}
 
 	// Initialize node states and dependency tracking
 	nodeStates := make(map[string]*nodeState)
@@ -124,7 +177,9 @@ func (wo *Orchestrator) Execute() error {
 		for {
 			select {
 			case <-displayTicker.C:
-				wo.displayStatus(nodeStates)
+				if wo.logger != nil {
+					wo.logger.OnStatusUpdate(wo.createStateSnapshot(nodeStates), dagSnapshot)
+				}
 			case <-displayDone:
 				return
 			}
@@ -169,6 +224,9 @@ func (wo *Orchestrator) Execute() error {
 				depState.skipped = true
 				depState.completed = true
 				depState.mu.Unlock()
+
+				// Log skip event
+				wo.logNodeEvent(dependent, EventNodeSkipped, depState)
 
 				completedMu.Lock()
 				completedCount++
@@ -221,6 +279,9 @@ func (wo *Orchestrator) Execute() error {
 					state.completed = true
 					state.mu.Unlock()
 
+					// Log skip event
+					wo.logNodeEvent(nodeName, EventNodeSkipped, state)
+
 					completedMu.Lock()
 					completedCount++
 					if completedCount == totalNodes {
@@ -237,6 +298,9 @@ func (wo *Orchestrator) Execute() error {
 				state.inProgress = true
 				state.startTime = time.Now()
 				state.mu.Unlock()
+
+				// Log start event
+				wo.logNodeEvent(nodeName, EventNodeStarted, state)
 
 				wg.Add(1)
 
@@ -274,6 +338,9 @@ func (wo *Orchestrator) Execute() error {
 							state.completed = true
 							state.mu.Unlock()
 
+							// Log failed-continue event
+							wo.logNodeEvent(name, EventNodeFailedContinue, state)
+
 							completedMu.Lock()
 							completedCount++
 							if completedCount == totalNodes {
@@ -290,6 +357,9 @@ func (wo *Orchestrator) Execute() error {
 							state.failed = true
 							state.completed = true
 							state.mu.Unlock()
+
+							// Log failed event
+							wo.logNodeEvent(name, EventNodeFailed, state)
 
 							errorMu.Lock()
 							if executionError == nil {
@@ -311,6 +381,9 @@ func (wo *Orchestrator) Execute() error {
 					state.completed = true
 					state.inProgress = false
 					state.mu.Unlock()
+
+					// Log completion event
+					wo.logNodeEvent(name, EventNodeCompleted, state)
 
 					// Update dependents and add newly ready nodes to queue
 					for _, dependent := range dependents[name] {
@@ -350,150 +423,35 @@ func (wo *Orchestrator) Execute() error {
 
 	// Stop display updater and show final status
 	close(displayDone)
-	wo.displayStatus(nodeStates)
+	if wo.logger != nil {
+		wo.logger.OnStatusUpdate(wo.createStateSnapshot(nodeStates), dagSnapshot)
+	}
 
 	duration := time.Since(start)
 
+	// Notify logger of workflow completion
+	if wo.logger != nil {
+		completedMu.Lock()
+		finalCompletedCount := completedCount
+		completedMu.Unlock()
+
+		wo.logger.OnWorkflowComplete(WorkflowEventData{
+			Event:          EventWorkflowCompleted,
+			StartTime:      start,
+			EndTime:        time.Now(),
+			Duration:       duration,
+			Error:          executionError,
+			TotalNodes:     totalNodes,
+			CompletedNodes: finalCompletedCount,
+		})
+		wo.logger.Close()
+	}
+
 	if executionError != nil {
-		fmt.Printf("\nWorkflow failed after %s\n", duration)
 		return executionError
 	}
 
-	fmt.Printf("\nWorkflow completed successfully in %s\n", duration)
 	return nil
-}
-
-func (wo *Orchestrator) displayStatus(nodeStates map[string]*nodeState) {
-	// Clear screen and move cursor to top
-	fmt.Print("\033[2J\033[H")
-
-	// Build dependency tree structure
-	type nodeDisplay struct {
-		name     string
-		state    *nodeState
-		children []*nodeDisplay
-		level    int
-	}
-
-	// Find root nodes (no dependencies)
-	roots := []*nodeDisplay{}
-	nodeDisplayMap := make(map[string]*nodeDisplay)
-
-	// Create all node displays
-	for name := range wo.Dag.Nodes {
-		nodeDisplayMap[name] = &nodeDisplay{
-			name:     name,
-			state:    nodeStates[name],
-			children: []*nodeDisplay{},
-		}
-	}
-
-	// Build tree structure
-	for name, node := range wo.Dag.Nodes {
-		if len(node.Depends) == 0 {
-			roots = append(roots, nodeDisplayMap[name])
-		} else {
-			// Add as child to all dependencies
-			for _, dep := range node.Depends {
-				if parent, exists := nodeDisplayMap[dep]; exists {
-					parent.children = append(parent.children, nodeDisplayMap[name])
-				}
-			}
-		}
-	}
-
-	// Sort roots by name for consistent display
-	sort.Slice(roots, func(i, j int) bool {
-		return roots[i].name < roots[j].name
-	})
-
-	// Display the tree
-	fmt.Println("Workflow Execution Status:")
-	fmt.Println()
-
-	visited := make(map[string]bool)
-	var displayNode func(*nodeDisplay, string, bool)
-	displayNode = func(node *nodeDisplay, prefix string, isLast bool) {
-		if visited[node.name] {
-			return
-		}
-		visited[node.name] = true
-
-		state := node.state
-		state.mu.Lock()
-		defer state.mu.Unlock()
-
-		// Determine status symbol and color
-		var symbol, color, status, duration string
-
-		if state.inProgress {
-			symbol = symbolInProgress
-			color = colorCyan
-			status = "in progress"
-			duration = fmt.Sprintf("(%s)", time.Since(state.startTime).Round(100*time.Millisecond))
-		} else if state.completed && !state.failed && !state.failedContinue && !state.skipped {
-			symbol = symbolSuccess
-			color = colorGreen
-			status = "success"
-			duration = fmt.Sprintf("(%s)", state.endTime.Sub(state.startTime).Round(100*time.Millisecond))
-		} else if state.failed {
-			symbol = symbolFailed
-			color = colorRed
-			status = fmt.Sprintf("failed - %v", state.error)
-			duration = fmt.Sprintf("(%s)", state.endTime.Sub(state.startTime).Round(100*time.Millisecond))
-		} else if state.failedContinue {
-			symbol = symbolFailedContinue
-			color = colorYellow
-			status = fmt.Sprintf("failed (continuing) - %v", state.error)
-			duration = fmt.Sprintf("(%s)", state.endTime.Sub(state.startTime).Round(100*time.Millisecond))
-		} else if state.skipped {
-			symbol = symbolSkipped
-			color = colorGray
-			status = "skipped"
-			duration = ""
-		} else {
-			symbol = symbolPending
-			color = colorGray
-			status = "pending"
-			duration = ""
-		}
-
-		// Draw tree structure
-		connector := "├─"
-		if isLast {
-			connector = "└─"
-		}
-
-		if prefix == "" {
-			fmt.Printf("%s%s%s %s %s %s\n", color, symbol, colorReset, node.name, duration, status)
-		} else {
-			fmt.Printf("%s%s %s%s%s %s %s %s\n", prefix, connector, color, symbol, colorReset, node.name, duration, status)
-		}
-
-		// Sort children by name for consistent display
-		sort.Slice(node.children, func(i, j int) bool {
-			return node.children[i].name < node.children[j].name
-		})
-
-		// Display children
-		for i, child := range node.children {
-			childPrefix := prefix
-			if prefix == "" {
-				childPrefix = "  "
-			} else {
-				if isLast {
-					childPrefix += "   "
-				} else {
-					childPrefix += "│  "
-				}
-			}
-			displayNode(child, childPrefix, i == len(node.children)-1)
-		}
-	}
-
-	for i, root := range roots {
-		displayNode(root, "", i == len(roots)-1)
-	}
 }
 
 func replaceParams(input string, params map[string]string) string {
@@ -591,3 +549,4 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 func (wo *Orchestrator) executeNode(nodeName string) error {
 	return wo.executeNodeWithContext(context.Background(), nodeName)
 }
+
