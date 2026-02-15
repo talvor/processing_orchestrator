@@ -1,13 +1,17 @@
+// Package dag defines the structures and methods for representing a directed acyclic graph (DAG) of steps in a workflow.
 package dag
 
 // Node represents a single step in the DAG.
 type Node struct {
-	Name          string         // Unique name of the step
-	Description   string         // Description of this step
-	Command       string         // Command to run for the step
-	Depends       []string       // Steps this step depends on
-	Preconditions []Precondition // Preconditions for this step
-	RetryPolicy   *RetryPolicy   // Optional retry policy for the step``
+	Name            string       // Unique name of the step
+	Description     string       // Description of this step
+	Command         string       // Command to run for the step
+	Args            []string     // Arguments for the command
+	Depends         []string     // Steps this step depends on
+	Preconditions   []Condition  // Preconditions for this step
+	When            *Condition   // Optional condition to determine if the step should be executed
+	RetryPolicy     *RetryPolicy // Optional retry policy for the step
+	ContinueOnError bool         // Whether to continue execution if this step fails
 }
 
 // DAG represents the directed acyclic graph structure.

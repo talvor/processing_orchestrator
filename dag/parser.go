@@ -8,9 +8,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Precondition represents a condition that must be met before a step is executed.
-type Precondition struct {
-	Condition string `yaml:"condition"` // The condition to evaluate
+// Condition represents a condition that must be met before a step is executed.
+type Condition struct {
+	Predicate string `yaml:"predicate"` // The condition to evaluate
 	Expected  string `yaml:"expected"`  // The expected outcome of the condition
 }
 
@@ -21,12 +21,15 @@ type RetryPolicy struct {
 
 // Step represents a single node in the DAG, corresponding to a step in the workflow. It includes the command to execute,
 type Step struct {
-	Name          string         `yaml:"name"`                    // Unique name of the step
-	Description   string         `yaml:"description,omitempty"`   // Description of this step
-	Command       string         `yaml:"command"`                 // Command to run for the step
-	Depends       []string       `yaml:"depends"`                 // Steps this step depends on
-	Preconditions []Precondition `yaml:"preconditions,omitempty"` // Preconditions for this step
-	ReryPolicy    *RetryPolicy   `yaml:"retry_policy,omitempty"`  // Optional retry policy for the step
+	Name            string       `yaml:"name"`                        // Unique name of the step
+	Description     string       `yaml:"description,omitempty"`       // Description of this step
+	Command         string       `yaml:"command"`                     // Command to run for the step
+	Args            []string     `yaml:"args,omitempty"`              // Arguments for the command
+	Depends         []string     `yaml:"depends"`                     // Steps this step depends on
+	Preconditions   []Condition  `yaml:"preconditions,omitempty"`     // Preconditions for this step
+	When            *Condition   `yaml:"when,omitempty"`              // Optional condition to determine if the step should be executed
+	RetryPolicy     *RetryPolicy `yaml:"retry_policy,omitempty"`      // Optional retry policy for the step
+	ContinueOnError bool         `yaml:"continue_on_error,omitempty"` // Whether to continue execution if this step fails
 }
 
 // DAGConfig represents the structure of the YAML file
@@ -58,12 +61,15 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 
 	for _, step := range config.Steps {
 		node := &Node{
-			Name:          step.Name,
-			Command:       step.Command,
-			Depends:       step.Depends,
-			Description:   step.Description,
-			Preconditions: step.Preconditions,
-			RetryPolicy:   step.ReryPolicy,
+			Name:            step.Name,
+			Command:         step.Command,
+			Args:            step.Args,
+			Depends:         step.Depends,
+			Description:     step.Description,
+			Preconditions:   step.Preconditions,
+			When:            step.When,
+			RetryPolicy:     step.RetryPolicy,
+			ContinueOnError: step.ContinueOnError,
 		}
 		dag.Nodes[step.Name] = node
 		for _, dep := range step.Depends {

@@ -2,13 +2,24 @@
 
 name: minimal configuration
 steps:
+  - name: step1
+    command: "sleep 1; echo 'step 1'"
+    preconditions:
+      - predicate: "echo 'true'"
+        expected: true
   - name: step2
     command: "sleep 2; echo 'step 2'"
+    depends:
+      - step1
   - name: step3
     command: "sleep 3; echo 'Step 3'"
     depends:
       - step1
-  - name: step1
-    command: "sleep 1; echo 'step 1'"
+    continue_on_error: true
+    when:
+      predicate: "echo 'true'"
+      expected: false
+  - name: step4
+    command: "echo 'Step 4'"
     depends:
-      - step2
+      - step3

@@ -1,3 +1,4 @@
+// Package workflow provides the Workflow struct which encapsulates the DAG and Orchestrator for managing and executing data processing pipelines. It allows users to load a DAG configuration from a YAML file, set a job to be processed, and orchestrate the execution of the workflow.
 package workflow
 
 import (

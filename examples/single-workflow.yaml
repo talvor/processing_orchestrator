@@ -1,0 +1,6 @@
+# Example Workflow Configuration File
+
+name: single step workflow
+steps:
+  - name: step1
+    command: "sleep 1; echo 'step 1'"

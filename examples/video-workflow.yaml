@@ -1,9 +1,23 @@
 steps:
+  - name: "prerequisite"
+    command: "mkdir -p output"
   - name: "download"
-    command: "curl -o output/original https://file-examples.com/storage/fe2045a03b698eee2936d7c/2017/04/file_example_MP4_480_1_5MG.mp4"
-    inputs: []
-    outputs: []
+    command: "curl -o output/original https://download.samplelib.com/mp4/sample-5s.mp4"
+    depends:
+      - prerequisite
   - name: "transcode"
     command: "ffmpeg -i output/original -c:v libx264 -crf 20 -preset medium -c:a aac output/result.mp4"
-    inputs: []
-    outputs: []
+    depends:
+      - download
+  - name: "grab_poster"
+    command: "ffmpeg -ss 00:00:01 -i output/original -frames:v 1 output/poster.png"
+    depends:
+      - download
+  - name: "thumbnail_320"
+    command: "convert output/poster.png -thumbnail 320x output/thumbnail_320.png"
+    depends:
+      - grab_poster
+  - name: "thumbnail_640"
+    command: "convert output/poster.png -thumbnail 640x output/thumbnail_640.png"
+    depends:
+      - grab_poster

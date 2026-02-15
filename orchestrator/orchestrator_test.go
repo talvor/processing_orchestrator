@@ -14,7 +14,7 @@ func TestWorkflowOrchestrator_Execute(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewWorkflowOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG)
 	if err := orchestrator.Execute(); err != nil {
 		t.Errorf("WorkflowOrchestrator failed: %v", err)
 	}
