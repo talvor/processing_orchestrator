@@ -16,6 +16,9 @@ const (
 	streamColorBlue   = "\033[34m"
 )
 
+// Spinner frame for in-progress status in stream logger
+const streamSymbolInProgress = "⠋"
+
 // StreamLogger outputs execution events as they happen
 type StreamLogger struct {
 	showTimestamps bool
@@ -82,7 +85,7 @@ func (s *StreamLogger) OnNodeEvent(data NodeEventData) {
 	switch data.Event {
 	case EventNodeStarted:
 		if s.colorized {
-			fmt.Printf("%s%s◐ %s%s started\n", timestamp, streamColorCyan, data.NodeName, streamColorReset)
+			fmt.Printf("%s%s%s %s%s started\n", timestamp, streamColorCyan, streamSymbolInProgress, data.NodeName, streamColorReset)
 		} else {
 			fmt.Printf("%s%s started\n", timestamp, data.NodeName)
 		}
