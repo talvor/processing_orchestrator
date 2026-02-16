@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"processing_pipeline/dag"
 )
@@ -14,7 +16,7 @@ func TestWorkflowOrchestrator_Execute(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG, nil)
 	if err := orchestrator.Execute(); err != nil {
 		t.Errorf("WorkflowOrchestrator failed: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestWhenConditionNotMet(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG, nil)
 	err := orchestrator.Execute()
 
 	// The workflow should not fail when a when condition is not met
@@ -83,7 +85,7 @@ func TestWhenConditionMet(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG, nil)
 	err := orchestrator.Execute()
 
 	if err != nil {
@@ -115,7 +117,7 @@ func TestWhenConditionWithContinueOnError(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG, nil)
 	err := orchestrator.Execute()
 
 	// Should not fail - when condition not met should skip the node
@@ -144,7 +146,7 @@ func TestContinueOnErrorSkipsDescendants(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG, nil)
 	err := orchestrator.Execute()
 
 	// Should not fail - continue_on_error should allow workflow to complete
@@ -178,11 +180,49 @@ func TestFailedParentSkipsDescendants(t *testing.T) {
 		},
 	}
 
-	orchestrator := NewOrchestrator(mockDAG)
+	orchestrator := NewOrchestrator(mockDAG, nil)
 	err := orchestrator.Execute()
 
 	// Should fail because B fails without continue_on_error
 	if err == nil {
 		t.Errorf("Expected workflow to fail, but it succeeded")
 	}
+}
+
+// TestOrchestratorWithParentContext tests that a parent context is properly used
+func TestOrchestratorWithParentContext(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {Name: "A", Command: "sleep 1 && echo A"},
+"B": {Name: "B", Command: "sleep 1 && echo B", Depends: []string{"A"}},
+},
+}
+
+// Create a context with timeout
+ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+defer cancel()
+
+orchestrator := NewOrchestrator(mockDAG, ctx)
+err := orchestrator.Execute()
+
+// Workflow should be cancelled due to parent context timeout
+if err == nil {
+t.Error("Expected workflow to fail due to context timeout, but it succeeded")
+}
+}
+
+// TestOrchestratorWithNilParentContext tests backward compatibility with nil parent context
+func TestOrchestratorWithNilParentContext(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {Name: "A", Command: "echo A"},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed with nil parent context, but got error: %v", err)
+}
 }

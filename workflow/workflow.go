@@ -2,6 +2,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 
 	"processing_pipeline/dag"
@@ -11,18 +12,20 @@ import (
 type Workflow struct {
 	Orchestrator *orchestrator.Orchestrator
 	Job          any
+	parentCtx    context.Context
 }
 
-func NewWorkflow(filename string) (*Workflow, error) {
+func NewWorkflow(filename string, parentCtx context.Context) (*Workflow, error) {
 	dag, err := dag.LoadDAGFromYAML(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	orchestrator := orchestrator.NewOrchestrator(dag)
+	orchestrator := orchestrator.NewOrchestrator(dag, parentCtx)
 
 	return &Workflow{
 		Orchestrator: orchestrator,
 		Job:          nil,
+		parentCtx:    parentCtx,
 	}, nil
 }
 

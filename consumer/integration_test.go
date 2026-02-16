@@ -240,7 +240,7 @@ func TestExecuteWorkflowError(t *testing.T) {
 	consumer := &SQSConsumer{}
 	
 	// Test with non-existent file
-	err := consumer.executeWorkflow("/non/existent/file.yaml")
+	err := consumer.executeWorkflow(context.Background(), "/non/existent/file.yaml")
 	if err == nil {
 		t.Error("Expected error for non-existent workflow file")
 	}
