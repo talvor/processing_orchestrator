@@ -36,6 +36,63 @@ The `workflow_file` should be the absolute path to a valid workflow YAML configu
 
 ## Usage
 
+### Local Testing with Localstack
+
+For local testing and development, you can use Localstack to simulate AWS SQS without needing an actual AWS account.
+
+#### Quick Start
+
+1. Start Localstack and create the test queue:
+
+```bash
+make localstack
+```
+
+This will:
+- Start a Localstack container on port 4566
+- Create a test SQS queue named `test-workflow-queue`
+- Display the connection information
+
+2. Build the SQS consumer:
+
+```bash
+make build-sqs-consumer
+```
+
+3. Run the SQS consumer with Localstack:
+
+```bash
+export SQS_QUEUE_URL=http://localhost:4566/000000000000/test-workflow-queue
+export AWS_REGION=us-east-1
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+export AWS_ENDPOINT_URL=http://localhost:4566
+./bin/sqs_consumer
+```
+
+4. Send test messages to the queue (in another terminal):
+
+```bash
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+aws --endpoint-url=http://localhost:4566 --region us-east-1 sqs send-message \
+  --queue-url http://localhost:4566/000000000000/test-workflow-queue \
+  --message-body '{"workflow_file":"'$(pwd)'/examples/single-workflow.yaml"}'
+```
+
+5. When done testing, stop Localstack:
+
+```bash
+make localstack-stop
+```
+
+#### Available Make Targets
+
+- `make localstack` - Start Localstack and setup SQS queue (combined)
+- `make localstack-start` - Start Localstack container only
+- `make localstack-setup-queue` - Create SQS queue in running Localstack
+- `make localstack-stop` - Stop and remove Localstack container
+
 ### Building
 
 ```bash
