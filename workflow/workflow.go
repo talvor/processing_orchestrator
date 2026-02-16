@@ -9,7 +9,6 @@ import (
 )
 
 type Workflow struct {
-	Dag          *dag.DAG
 	Orchestrator *orchestrator.Orchestrator
 	Job          any
 }
@@ -22,7 +21,6 @@ func NewWorkflow(filename string) (*Workflow, error) {
 	orchestrator := orchestrator.NewOrchestrator(dag)
 
 	return &Workflow{
-		Dag:          dag,
 		Orchestrator: orchestrator,
 		Job:          nil,
 	}, nil
@@ -30,4 +28,8 @@ func NewWorkflow(filename string) (*Workflow, error) {
 
 func (w *Workflow) SetJob(job any) {
 	w.Job = job
+}
+
+func (w *Workflow) Execute() error {
+	return w.Orchestrator.Execute()
 }
