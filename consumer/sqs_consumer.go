@@ -176,11 +176,10 @@ func (c *SQSConsumer) extendVisibilityTimeout(ctx context.Context, message types
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			newTimeout := c.visibilityTimeout
 			_, err := c.sqsClient.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
 				QueueUrl:          aws.String(c.queueURL),
 				ReceiptHandle:     message.ReceiptHandle,
-				VisibilityTimeout: newTimeout,
+				VisibilityTimeout: c.visibilityTimeout,
 			})
 			if err != nil {
 				log.Printf("Failed to extend visibility timeout for message %s: %v\n", *message.MessageId, err)

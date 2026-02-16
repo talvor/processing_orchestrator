@@ -194,7 +194,7 @@ func TestStartWithContextCancellation(t *testing.T) {
 	consumer := NewSQSConsumer(mockClient, "test-queue-url")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Start consumer in goroutine
 	errChan := make(chan error, 1)
 	go func() {
