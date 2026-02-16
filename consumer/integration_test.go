@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -247,23 +248,10 @@ func TestExecuteWorkflowError(t *testing.T) {
 	// Error message should contain details
 	if err != nil {
 		expectedSubstring := "failed to create workflow"
-		if !contains(err.Error(), expectedSubstring) {
+		if !strings.Contains(err.Error(), expectedSubstring) {
 			t.Errorf("Expected error to contain '%s', got: %s", expectedSubstring, err.Error())
 		}
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // BenchmarkProcessMessage benchmarks message processing

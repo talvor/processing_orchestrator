@@ -35,11 +35,11 @@ func main() {
 
 	// Load AWS configuration
 	ctx := context.Background()
-	var cfg config.LoadOptionsFunc
+	var opts []func(*config.LoadOptions) error
 	if region != "" {
-		cfg = config.WithRegion(region)
+		opts = append(opts, config.WithRegion(region))
 	}
-	awsConfig, err := config.LoadDefaultConfig(ctx, cfg)
+	awsConfig, err := config.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		log.Fatalf("Failed to load AWS configuration: %v", err)
 	}
