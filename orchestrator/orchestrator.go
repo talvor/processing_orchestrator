@@ -25,6 +25,7 @@ type Orchestrator struct {
 	Dag         *dag.DAG
 	WorkerCount int             // Maximum number of concurrent workers
 	logger      ExecutionLogger // Pluggable logger
+	parentCtx   context.Context // Optional parent context
 }
 
 // nodeState tracks the execution state of each node
@@ -41,20 +42,22 @@ type nodeState struct {
 	mu             sync.Mutex
 }
 
-func NewOrchestrator(dag *dag.DAG) *Orchestrator {
+func NewOrchestrator(dag *dag.DAG, parentCtx context.Context) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
 		WorkerCount: 5,                 // Default worker count
 		logger:      NewStreamLogger(), // Default to stream logger
+		parentCtx:   parentCtx,
 	}
 }
 
 // NewOrchestratorWithWorkers creates an orchestrator with a specific worker count
-func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int) *Orchestrator {
+func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int, parentCtx context.Context) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
 		WorkerCount: workerCount,
 		logger:      NewStreamLogger(),
+		parentCtx:   parentCtx,
 	}
 }
 
@@ -162,7 +165,12 @@ func (wo *Orchestrator) Execute() error {
 	}
 
 	// Error handling and cancellation
-	ctx, cancel := context.WithCancel(context.Background())
+	// Use parent context if provided, otherwise use background context
+	baseCtx := context.Background()
+	if wo.parentCtx != nil {
+		baseCtx = wo.parentCtx
+	}
+	ctx, cancel := context.WithCancel(baseCtx)
 	defer cancel()
 
 	var executionError error

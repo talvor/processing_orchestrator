@@ -26,7 +26,7 @@ to quickly create a Cobra application.`,
 			os.Exit(1)
 		}
 
-		w, err := workflow.NewWorkflow(args[0])
+		w, err := workflow.NewWorkflow(args[0], nil)
 		if err != nil {
 			fmt.Printf("Failed to create workflow: %v\n", err)
 			os.Exit(1)
