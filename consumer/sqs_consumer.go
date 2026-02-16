@@ -133,7 +133,7 @@ func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message)
 	go c.extendVisibilityTimeout(processCtx, message, extendDone)
 	
 	// Create and execute the workflow
-	err := c.executeWorkflow(processCtx, workflowMsg.WorkflowFile)
+	err := c.executeWorkflow(workflowMsg.WorkflowFile)
 	
 	// Stop visibility timeout extension
 	cancelProcess()
@@ -151,7 +151,7 @@ func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message)
 }
 
 // executeWorkflow creates and executes a workflow from the specified file
-func (c *SQSConsumer) executeWorkflow(ctx context.Context, workflowFile string) error {
+func (c *SQSConsumer) executeWorkflow(workflowFile string) error {
 	w, err := workflow.NewWorkflow(workflowFile)
 	if err != nil {
 		return fmt.Errorf("failed to create workflow: %w", err)
