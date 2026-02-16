@@ -1,5 +1,5 @@
-// Package cmd provides the command-line functionality for the processing orchestrator.
-package cmd
+// Package cli provides the command-line functionality for the processing orchestrator.
+package cli
 
 import (
 	"os"

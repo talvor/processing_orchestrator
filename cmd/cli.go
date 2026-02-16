@@ -1,11 +1,10 @@
 /*
 Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-
 */
 package main
 
-import "processing_pipeline/cmd"
+import "processing_pipeline/cli"
 
 func main() {
-	cmd.Execute()
+	cli.Execute()
 }
