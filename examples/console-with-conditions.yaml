@@ -1,0 +1,32 @@
+# Example Workflow Configuration File with console output
+
+name: minimal configuration with console
+steps:
+  - name: step1
+    command: "sleep 1; echo 'step 1 output'"
+    console:
+      stdout: true
+    preconditions:
+      - predicate: "echo 'true'"
+        expected: true
+  - name: step2
+    command: "sleep 2; echo 'step 2 output'"
+    console:
+      stdout: true
+      stderr: true
+    depends:
+      - step1
+  - name: step3
+    command: "sleep 1; echo 'Step 3 - this will not be shown'"
+    depends:
+      - step1
+    continue_on_error: true
+    when:
+      predicate: "echo 'true'"
+      expected: false
+  - name: step4
+    command: "echo 'Step 4 completed'"
+    console:
+      stdout: true
+    depends:
+      - step3
