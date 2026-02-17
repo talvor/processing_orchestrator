@@ -1,0 +1,37 @@
+# Example Workflow demonstrating console output configuration
+
+name: console output demonstration
+steps:
+  - name: "Step with stdout"
+    command: "echo 'This message will be printed to stdout'"
+    console:
+      stdout: true
+      stderr: false
+  
+  - name: "Step with stderr"
+    command: "echo 'This error message will be printed to stderr' >&2"
+    console:
+      stdout: false
+      stderr: true
+    depends:
+      - "Step with stdout"
+  
+  - name: "Step with both"
+    command: "echo 'Normal output' && echo 'Error output' >&2"
+    console:
+      stdout: true
+      stderr: true
+    depends:
+      - "Step with stderr"
+  
+  - name: "Step without console output"
+    command: "echo 'This message will not be printed to console'"
+    depends:
+      - "Step with both"
+  
+  - name: "Final step"
+    command: "echo 'Final step with console output enabled'"
+    console:
+      stdout: true
+    depends:
+      - "Step without console output"
