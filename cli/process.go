@@ -36,6 +36,10 @@ to quickly create a Cobra application.`,
 			w.Orchestrator.SetLogger(orchestrator.NewTreeLogger())
 		}
 
+		if cmd.Flag("logger").Value.String() == "stream" {
+			w.Orchestrator.SetLogger(orchestrator.NewStreamLogger())
+		}
+
 		err = w.Orchestrator.Execute()
 		if err != nil {
 			fmt.Printf("Workflow execution failed: %v\n", err)
@@ -48,5 +52,5 @@ func init() {
 	rootCmd.AddCommand(processCmd)
 
 	// Here you define flags and configuration settings.
-	processCmd.Flags().StringP("logger", "l", "stream", "Set the logger to use ('stream' or 'tree')")
+	processCmd.Flags().StringP("logger", "l", "noop", "Set the logger to use ('stream', 'tree' or 'noop')")
 }

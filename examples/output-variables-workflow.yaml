@@ -9,16 +9,12 @@ steps:
     command: "date +%Y%m%d_%H%M%S"
     output:
       stdout: timestamp
-    console:
-      stdout: true
 
   # Step 2: Generate a unique ID and store it
   - name: generate_id
     command: "uuidgen"
     output:
       stdout: uniqueId
-    console:
-      stdout: true
 
   # Step 3: Use the captured timestamp in a filename
   - name: create_file_with_timestamp
@@ -33,16 +29,12 @@ steps:
     command: "echo 'Processing ID: $uniqueId'"
     depends:
       - generate_id
-    console:
-      stdout: true
 
   # Step 5: Capture version info and use it in a precondition
   - name: check_shell_version
     command: "bash --version | head -n1 | cut -d' ' -f4"
     output:
       stdout: bashVersion
-    console:
-      stdout: true
 
   # Step 6: Use captured version in a precondition
   - name: verify_version_captured
@@ -77,8 +69,6 @@ steps:
     command: "echo 'This is an error message' >&2"
     output:
       stderr: errorMsg
-    console:
-      stderr: true
 
   # Step 10: Use the stderr variable
   - name: use_stderr_var
@@ -94,9 +84,6 @@ steps:
     output:
       stdout: stdoutMsg
       stderr: stderrMsg
-    console:
-      stdout: true
-      stderr: true
 
   # Step 12: Use both captured variables
   - name: use_both_vars

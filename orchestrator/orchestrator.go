@@ -25,11 +25,11 @@ func (e *WhenConditionNotMetError) Error() string {
 
 type Orchestrator struct {
 	Dag         *dag.DAG
-	WorkerCount int                // Maximum number of concurrent workers
-	logger      ExecutionLogger    // Pluggable logger
-	parentCtx   context.Context    // Optional parent context
-	outputVars  map[string]string  // Stores output variables from steps
-	outputMu    sync.RWMutex       // Mutex for thread-safe access to outputVars
+	WorkerCount int               // Maximum number of concurrent workers
+	logger      ExecutionLogger   // Pluggable logger
+	parentCtx   context.Context   // Optional parent context
+	outputVars  map[string]string // Stores output variables from steps
+	outputMu    sync.RWMutex      // Mutex for thread-safe access to outputVars
 }
 
 // nodeState tracks the execution state of each node
@@ -47,13 +47,7 @@ type nodeState struct {
 }
 
 func NewOrchestrator(dag *dag.DAG, parentCtx context.Context) *Orchestrator {
-	return &Orchestrator{
-		Dag:         dag,
-		WorkerCount: 5,                      // Default worker count
-		logger:      NewStreamLogger(),      // Default to stream logger
-		parentCtx:   parentCtx,
-		outputVars:  make(map[string]string), // Initialize output variables map
-	}
+	return NewOrchestratorWithWorkers(dag, 5, parentCtx) // Default to 5 workers
 }
 
 // NewOrchestratorWithWorkers creates an orchestrator with a specific worker count
@@ -61,7 +55,7 @@ func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int, parentCtx context
 	return &Orchestrator{
 		Dag:         dag,
 		WorkerCount: workerCount,
-		logger:      NewStreamLogger(),
+		logger:      NewNoOpLogger(), // Default to noop logger
 		parentCtx:   parentCtx,
 		outputVars:  make(map[string]string), // Initialize output variables map
 	}
@@ -642,10 +636,10 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			// Use sh -c for backward compatibility when no args are provided
 			cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
 		}
-		
+
 		// Setup output capture for variables
 		var stdoutBuf, stderrBuf strings.Builder
-		
+
 		// Configure stdout and stderr based on Console and Output configuration
 		if node.Output != nil && node.Output.Stdout != "" {
 			// Capture stdout to variable
@@ -659,7 +653,7 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			// Only console output, no capture
 			cmd.Stdout = os.Stdout
 		}
-		
+
 		if node.Output != nil && node.Output.Stderr != "" {
 			// Capture stderr to variable
 			if node.Console != nil && node.Console.Stderr {
@@ -696,7 +690,7 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			}
 			wo.outputMu.Unlock()
 		}
-		
+
 		return nil
 	}
 
@@ -706,4 +700,3 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 func (wo *Orchestrator) executeNode(nodeName string) error {
 	return wo.executeNodeWithContext(context.Background(), nodeName)
 }
-
