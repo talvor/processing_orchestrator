@@ -19,6 +19,12 @@ type RetryPolicy struct {
 	Limit int `yaml:"limit"` // Maximum number of retries
 }
 
+// Console represents the console output configuration for a step
+type Console struct {
+	Stdout bool `yaml:"stdout"` // Whether to write stdout to console
+	Stderr bool `yaml:"stderr"` // Whether to write stderr to console
+}
+
 // Step represents a single node in the DAG, corresponding to a step in the workflow. It includes the command to execute,
 type Step struct {
 	Name            string       `yaml:"name"`                        // Unique name of the step
@@ -30,6 +36,7 @@ type Step struct {
 	When            *Condition   `yaml:"when,omitempty"`              // Optional condition to determine if the step should be executed
 	RetryPolicy     *RetryPolicy `yaml:"retry_policy,omitempty"`      // Optional retry policy for the step
 	ContinueOnError bool         `yaml:"continue_on_error,omitempty"` // Whether to continue execution if this step fails
+	Console         *Console     `yaml:"console,omitempty"`           // Optional console output configuration for the step
 }
 
 // DAGConfig represents the structure of the YAML file
@@ -70,6 +77,7 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 			When:            step.When,
 			RetryPolicy:     step.RetryPolicy,
 			ContinueOnError: step.ContinueOnError,
+			Console:         step.Console,
 		}
 		dag.Nodes[step.Name] = node
 		for _, dep := range step.Depends {

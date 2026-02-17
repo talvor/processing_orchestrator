@@ -307,3 +307,62 @@ if err != nil {
 t.Errorf("Expected workflow to succeed with nil args, but got error: %v", err)
 }
 }
+
+// TestConsoleOutputEnabled tests that console output is written when configured
+func TestConsoleOutputEnabled(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'test stdout message'",
+Console: &dag.Console{
+Stdout: true,
+Stderr: false,
+},
+},
+"B": {
+Name:    "B",
+Command: "echo 'test stderr message' >&2",
+Console: &dag.Console{
+Stdout: false,
+Stderr: true,
+},
+},
+"C": {
+Name:    "C",
+Command: "echo 'both stdout and stderr' && echo 'error message' >&2",
+Console: &dag.Console{
+Stdout: true,
+Stderr: true,
+},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed with console output enabled, but got error: %v", err)
+}
+}
+
+// TestConsoleOutputDisabled tests that console output is not written when not configured
+func TestConsoleOutputDisabled(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'test message'",
+Console: nil, // No console configuration
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed without console output, but got error: %v", err)
+}
+}

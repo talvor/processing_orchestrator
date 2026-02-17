@@ -4,6 +4,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -627,8 +628,16 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			// Use sh -c for backward compatibility when no args are provided
 			cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
 		}
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		
+		// Configure stdout and stderr based on Console configuration
+		if node.Console != nil {
+			if node.Console.Stdout {
+				cmd.Stdout = os.Stdout
+			}
+			if node.Console.Stderr {
+				cmd.Stderr = os.Stderr
+			}
+		}
 
 		if err := cmd.Run(); err != nil {
 			// Check if error was due to context cancellation
