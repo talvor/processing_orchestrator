@@ -287,3 +287,23 @@ if err != nil {
 t.Errorf("Expected workflow to succeed, but got error: %v", err)
 }
 }
+
+// TestCommandWithNilArgs tests true backward compatibility - commands with nil args field
+func TestCommandWithNilArgs(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'hello world'",
+Args:    nil, // nil args - legacy workflow
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed with nil args, but got error: %v", err)
+}
+}
