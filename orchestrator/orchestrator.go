@@ -547,14 +547,14 @@ func (wo *Orchestrator) Execute() error {
 func (wo *Orchestrator) replaceParams(input string, params map[string]string) string {
 	// Merge params with output variables (params take precedence)
 	result := input
-	
+
 	// First replace output variables
 	wo.outputMu.RLock()
 	for varName, value := range wo.outputVars {
 		result = strings.ReplaceAll(result, "$"+varName, value)
 	}
 	wo.outputMu.RUnlock()
-	
+
 	// Then replace params (can override output variables if same name)
 	for param, value := range params {
 		result = strings.ReplaceAll(result, "$"+param, value)
