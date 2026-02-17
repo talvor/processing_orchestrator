@@ -86,6 +86,11 @@ localstack: localstack-start localstack-setup-queue
 	@echo ""
 	@echo "Localstack is ready for testing!"
 
+.PHONY: test
+test:
+	@echo "Running tests..."
+	@go test ./...
+
 .PHONY: help
 help:
 	@echo "Valid targets are:"
@@ -93,6 +98,7 @@ help:
 	@echo "  build-cli          : Build the CLI binary"
 	@echo "  build-sqs-consumer : Build the SQS consumer binary"
 	@echo "  clean              : Remove generated files"
+	@echo "  test               : Run all tests in the project"
 	@echo "  localstack         : Start Localstack and setup SQS queue (combined)"
 	@echo "  localstack-start   : Start Localstack container"
 	@echo "  localstack-setup-queue : Create SQS queue in Localstack"
