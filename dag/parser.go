@@ -25,6 +25,12 @@ type Console struct {
 	Stderr bool `yaml:"stderr"` // Whether to write stderr to console
 }
 
+// Output represents the variable output configuration for a step
+type Output struct {
+	Stdout string `yaml:"stdout"` // Variable name to store stdout
+	Stderr string `yaml:"stderr"` // Variable name to store stderr
+}
+
 // Step represents a single node in the DAG, corresponding to a step in the workflow. It includes the command to execute,
 type Step struct {
 	Name            string       `yaml:"name"`                        // Unique name of the step
@@ -37,6 +43,7 @@ type Step struct {
 	RetryPolicy     *RetryPolicy `yaml:"retry_policy,omitempty"`      // Optional retry policy for the step
 	ContinueOnError bool         `yaml:"continue_on_error,omitempty"` // Whether to continue execution if this step fails
 	Console         *Console     `yaml:"console,omitempty"`           // Optional console output configuration for the step
+	Output          *Output      `yaml:"output,omitempty"`            // Optional variable output configuration for the step
 }
 
 // DAGConfig represents the structure of the YAML file
@@ -78,6 +85,7 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 			RetryPolicy:     step.RetryPolicy,
 			ContinueOnError: step.ContinueOnError,
 			Console:         step.Console,
+			Output:          step.Output,
 		}
 		dag.Nodes[step.Name] = node
 		for _, dep := range step.Depends {

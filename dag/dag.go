@@ -13,6 +13,7 @@ type Node struct {
 	RetryPolicy     *RetryPolicy // Optional retry policy for the step
 	ContinueOnError bool         // Whether to continue execution if this step fails
 	Console         *Console     // Optional console output configuration for the step
+	Output          *Output      // Optional variable output configuration for the step
 }
 
 // DAG represents the directed acyclic graph structure.

@@ -1,0 +1,107 @@
+# Example Workflow demonstrating output variables feature
+# Steps can capture stdout/stderr to variables and use them in later steps
+
+name: Output Variables Demo
+
+steps:
+  # Step 1: Generate a timestamp and store it in a variable
+  - name: generate_timestamp
+    command: "date +%Y%m%d_%H%M%S"
+    output:
+      stdout: timestamp
+    console:
+      stdout: true
+
+  # Step 2: Generate a unique ID and store it
+  - name: generate_id
+    command: "uuidgen"
+    output:
+      stdout: uniqueId
+    console:
+      stdout: true
+
+  # Step 3: Use the captured timestamp in a filename
+  - name: create_file_with_timestamp
+    command: "echo 'File created at $timestamp' > /tmp/output_$timestamp.txt && cat /tmp/output_$timestamp.txt"
+    depends:
+      - generate_timestamp
+    console:
+      stdout: true
+
+  # Step 4: Use the unique ID in a command
+  - name: use_unique_id
+    command: "echo 'Processing ID: $uniqueId'"
+    depends:
+      - generate_id
+    console:
+      stdout: true
+
+  # Step 5: Capture version info and use it in a precondition
+  - name: check_shell_version
+    command: "bash --version | head -n1 | cut -d' ' -f4"
+    output:
+      stdout: bashVersion
+    console:
+      stdout: true
+
+  # Step 6: Use captured version in a precondition
+  - name: verify_version_captured
+    command: "echo 'Bash version is $bashVersion'"
+    depends:
+      - check_shell_version
+    preconditions:
+      - predicate: "test -n '$bashVersion'"
+        expected: ""
+    console:
+      stdout: true
+
+  # Step 7: Capture a status value
+  - name: determine_status
+    command: "echo 'ready'"
+    output:
+      stdout: status
+
+  # Step 8: Use status in a when condition
+  - name: conditional_step
+    command: "echo 'Status is ready, proceeding...'"
+    depends:
+      - determine_status
+    when:
+      predicate: "echo '$status'"
+      expected: ready
+    console:
+      stdout: true
+
+  # Step 9: Demonstrate stderr capture
+  - name: capture_stderr
+    command: "echo 'This is an error message' >&2"
+    output:
+      stderr: errorMsg
+    console:
+      stderr: true
+
+  # Step 10: Use the stderr variable
+  - name: use_stderr_var
+    command: "echo 'Captured error: $errorMsg'"
+    depends:
+      - capture_stderr
+    console:
+      stdout: true
+
+  # Step 11: Demonstrate capturing both stdout and stderr
+  - name: capture_both
+    command: "echo 'Standard output' && echo 'Standard error' >&2"
+    output:
+      stdout: stdoutMsg
+      stderr: stderrMsg
+    console:
+      stdout: true
+      stderr: true
+
+  # Step 12: Use both captured variables
+  - name: use_both_vars
+    command: "echo 'Stdout was: $stdoutMsg' && echo 'Stderr was: $stderrMsg'"
+    depends:
+      - capture_both
+    console:
+      stdout: true

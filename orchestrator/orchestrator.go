@@ -4,6 +4,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -24,9 +25,11 @@ func (e *WhenConditionNotMetError) Error() string {
 
 type Orchestrator struct {
 	Dag         *dag.DAG
-	WorkerCount int             // Maximum number of concurrent workers
-	logger      ExecutionLogger // Pluggable logger
-	parentCtx   context.Context // Optional parent context
+	WorkerCount int                // Maximum number of concurrent workers
+	logger      ExecutionLogger    // Pluggable logger
+	parentCtx   context.Context    // Optional parent context
+	outputVars  map[string]string  // Stores output variables from steps
+	outputMu    sync.RWMutex       // Mutex for thread-safe access to outputVars
 }
 
 // nodeState tracks the execution state of each node
@@ -46,9 +49,10 @@ type nodeState struct {
 func NewOrchestrator(dag *dag.DAG, parentCtx context.Context) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
-		WorkerCount: 5,                 // Default worker count
-		logger:      NewStreamLogger(), // Default to stream logger
+		WorkerCount: 5,                      // Default worker count
+		logger:      NewStreamLogger(),      // Default to stream logger
 		parentCtx:   parentCtx,
+		outputVars:  make(map[string]string), // Initialize output variables map
 	}
 }
 
@@ -59,6 +63,7 @@ func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int, parentCtx context
 		WorkerCount: workerCount,
 		logger:      NewStreamLogger(),
 		parentCtx:   parentCtx,
+		outputVars:  make(map[string]string), // Initialize output variables map
 	}
 }
 
@@ -539,9 +544,18 @@ func (wo *Orchestrator) Execute() error {
 	return nil
 }
 
-func replaceParams(input string, params map[string]string) string {
-	// Check for references like $1, $2, etc.
+func (wo *Orchestrator) replaceParams(input string, params map[string]string) string {
+	// Merge params with output variables (params take precedence)
 	result := input
+
+	// First replace output variables
+	wo.outputMu.RLock()
+	for varName, value := range wo.outputVars {
+		result = strings.ReplaceAll(result, "$"+varName, value)
+	}
+	wo.outputMu.RUnlock()
+
+	// Then replace params (can override output variables if same name)
 	for param, value := range params {
 		result = strings.ReplaceAll(result, "$"+param, value)
 	}
@@ -560,8 +574,8 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 	}
 
 	if node.When != nil {
-		predicate := replaceParams(node.When.Predicate, params)
-		expected := replaceParams(node.When.Expected, params)
+		predicate := wo.replaceParams(node.When.Predicate, params)
+		expected := wo.replaceParams(node.When.Expected, params)
 		cmd := exec.CommandContext(ctx, "sh", "-c", predicate)
 		output, err := cmd.Output()
 
@@ -580,8 +594,8 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 
 	// Check preconditions
 	for _, precondition := range node.Preconditions {
-		predicate := replaceParams(precondition.Predicate, params)
-		expected := replaceParams(precondition.Expected, params)
+		predicate := wo.replaceParams(precondition.Predicate, params)
+		expected := wo.replaceParams(precondition.Expected, params)
 		cmd := exec.CommandContext(ctx, "sh", "-c", predicate)
 		output, err := cmd.Output()
 
@@ -596,14 +610,14 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 		}
 	}
 
-	replacedCommand := replaceParams(node.Command, params)
+	replacedCommand := wo.replaceParams(node.Command, params)
 
 	// Replace parameters in args if args are provided
 	var replacedArgs []string
 	if len(node.Args) > 0 {
 		replacedArgs = make([]string, len(node.Args))
 		for i, arg := range node.Args {
-			replacedArgs[i] = replaceParams(arg, params)
+			replacedArgs[i] = wo.replaceParams(arg, params)
 		}
 	}
 
@@ -629,14 +643,34 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
 		}
 		
-		// Configure stdout and stderr based on Console configuration
-		if node.Console != nil {
-			if node.Console.Stdout {
-				cmd.Stdout = os.Stdout
+		// Setup output capture for variables
+		var stdoutBuf, stderrBuf strings.Builder
+		
+		// Configure stdout and stderr based on Console and Output configuration
+		if node.Output != nil && node.Output.Stdout != "" {
+			// Capture stdout to variable
+			if node.Console != nil && node.Console.Stdout {
+				// Also write to console
+				cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+			} else {
+				cmd.Stdout = &stdoutBuf
 			}
-			if node.Console.Stderr {
-				cmd.Stderr = os.Stderr
+		} else if node.Console != nil && node.Console.Stdout {
+			// Only console output, no capture
+			cmd.Stdout = os.Stdout
+		}
+		
+		if node.Output != nil && node.Output.Stderr != "" {
+			// Capture stderr to variable
+			if node.Console != nil && node.Console.Stderr {
+				// Also write to console
+				cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+			} else {
+				cmd.Stderr = &stderrBuf
 			}
+		} else if node.Console != nil && node.Console.Stderr {
+			// Only console output, no capture
+			cmd.Stderr = os.Stderr
 		}
 
 		if err := cmd.Run(); err != nil {
@@ -651,7 +685,18 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			continue
 		}
 
-		// Successful execution
+		// Successful execution - store output variables if configured
+		if node.Output != nil {
+			wo.outputMu.Lock()
+			if node.Output.Stdout != "" {
+				wo.outputVars[node.Output.Stdout] = strings.TrimSpace(stdoutBuf.String())
+			}
+			if node.Output.Stderr != "" {
+				wo.outputVars[node.Output.Stderr] = strings.TrimSpace(stderrBuf.String())
+			}
+			wo.outputMu.Unlock()
+		}
+		
 		return nil
 	}
 

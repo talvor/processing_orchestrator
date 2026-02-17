@@ -395,3 +395,237 @@ t.Errorf("Expected workflow to succeed with console output, but got error: %v", 
 // If stdout/stderr are not configured correctly, this test would still pass
 // but the feature demonstration in examples shows it works
 }
+
+// TestOutputVariableStdout tests that stdout can be captured to a variable
+func TestOutputVariableStdout(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'hello world'",
+Output: &dag.Output{
+Stdout: "greeting",
+},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed, but got error: %v", err)
+}
+
+// Check that the variable was captured
+orchestrator.outputMu.RLock()
+value, exists := orchestrator.outputVars["greeting"]
+orchestrator.outputMu.RUnlock()
+
+if !exists {
+t.Errorf("Expected 'greeting' variable to be captured")
+}
+if value != "hello world" {
+t.Errorf("Expected 'greeting' to be 'hello world', got '%s'", value)
+}
+}
+
+// TestOutputVariableStderr tests that stderr can be captured to a variable
+func TestOutputVariableStderr(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'error message' >&2",
+Output: &dag.Output{
+Stderr: "errorMsg",
+},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed, but got error: %v", err)
+}
+
+// Check that the variable was captured
+orchestrator.outputMu.RLock()
+value, exists := orchestrator.outputVars["errorMsg"]
+orchestrator.outputMu.RUnlock()
+
+if !exists {
+t.Errorf("Expected 'errorMsg' variable to be captured")
+}
+if value != "error message" {
+t.Errorf("Expected 'errorMsg' to be 'error message', got '%s'", value)
+}
+}
+
+// TestOutputVariableInCommand tests that captured variables can be used in later step commands
+func TestOutputVariableInCommand(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'test123'",
+Output: &dag.Output{
+Stdout: "myVar",
+},
+},
+"B": {
+Name:    "B",
+Command: "test '$myVar' = 'test123'",
+Depends: []string{"A"},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed with variable replacement, but got error: %v", err)
+}
+
+// Verify the variable was captured
+orchestrator.outputMu.RLock()
+value, exists := orchestrator.outputVars["myVar"]
+orchestrator.outputMu.RUnlock()
+
+if !exists {
+t.Errorf("Expected 'myVar' variable to be captured")
+}
+if value != "test123" {
+t.Errorf("Expected 'myVar' to be 'test123', got '%s'", value)
+}
+}
+
+// TestOutputVariableInPrecondition tests that captured variables can be used in preconditions
+func TestOutputVariableInPrecondition(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'success'",
+Output: &dag.Output{
+Stdout: "status",
+},
+},
+"B": {
+Name:    "B",
+Command: "echo 'proceeding'",
+Depends: []string{"A"},
+Preconditions: []dag.Condition{
+{
+Predicate: "echo '$status'",
+Expected:  "success",
+},
+},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed with variable in precondition, but got error: %v", err)
+}
+}
+
+// TestOutputVariableInWhenCondition tests that captured variables can be used in when conditions
+func TestOutputVariableInWhenCondition(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'yes'",
+Output: &dag.Output{
+Stdout: "decision",
+},
+},
+"B": {
+Name:    "B",
+Command: "echo 'executing B'",
+Depends: []string{"A"},
+When: &dag.Condition{
+Predicate: "echo '$decision'",
+Expected:  "yes",
+},
+},
+"C": {
+Name:    "C",
+Command: "echo 'executing C'",
+Depends: []string{"B"},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed with variable in when condition, but got error: %v", err)
+}
+}
+
+// TestOutputVariableInArgs tests that captured variables can be used in command args
+func TestOutputVariableInArgs(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'value123'",
+Output: &dag.Output{
+Stdout: "myArg",
+},
+},
+"B": {
+Name:    "B",
+Command: "test",
+Args:    []string{"$myArg", "=", "value123"},
+Depends: []string{"A"},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed with variable in args, but got error: %v", err)
+}
+}
+
+// TestOutputVariableWithConsole tests that output can be captured while also displaying to console
+func TestOutputVariableWithConsole(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'captured and displayed'",
+Console: &dag.Console{
+Stdout: true,
+},
+Output: &dag.Output{
+Stdout: "displayedVar",
+},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+if err != nil {
+t.Errorf("Expected workflow to succeed, but got error: %v", err)
+}
+
+// Check that the variable was captured
+orchestrator.outputMu.RLock()
+value, exists := orchestrator.outputVars["displayedVar"]
+orchestrator.outputMu.RUnlock()
+
+if !exists {
+t.Errorf("Expected 'displayedVar' variable to be captured")
+}
+if value != "captured and displayed" {
+t.Errorf("Expected 'displayedVar' to be 'captured and displayed', got '%s'", value)
+}
+}
