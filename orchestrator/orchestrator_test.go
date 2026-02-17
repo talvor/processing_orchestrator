@@ -226,3 +226,84 @@ if err != nil {
 t.Errorf("Expected workflow to succeed with nil parent context, but got error: %v", err)
 }
 }
+
+// TestCommandWithArgs tests that commands with args are executed directly (not via sh -c)
+func TestCommandWithArgs(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo",
+Args:    []string{"hello", "world"},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed, but got error: %v", err)
+}
+}
+
+// TestCommandWithArgsAndParams tests parameter replacement in args
+func TestCommandWithArgsAndParams(t *testing.T) {
+mockDAG := &dag.DAG{
+Params: []string{"test_value", "another_value"},
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo",
+Args:    []string{"$1", "$2"},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed, but got error: %v", err)
+}
+}
+
+// TestCommandWithoutArgs tests backward compatibility - commands without args
+func TestCommandWithoutArgs(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo",
+Args:    []string{},
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed, but got error: %v", err)
+}
+}
+
+// TestCommandWithNilArgs tests true backward compatibility - commands with nil args field
+func TestCommandWithNilArgs(t *testing.T) {
+mockDAG := &dag.DAG{
+Nodes: map[string]*dag.Node{
+"A": {
+Name:    "A",
+Command: "echo 'hello world'",
+Args:    nil, // nil args - legacy workflow
+},
+},
+}
+
+orchestrator := NewOrchestrator(mockDAG, nil)
+err := orchestrator.Execute()
+
+if err != nil {
+t.Errorf("Expected workflow to succeed with nil args, but got error: %v", err)
+}
+}

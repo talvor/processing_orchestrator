@@ -1,0 +1,29 @@
+name: args example workflow
+params: test_param another_param
+steps:
+  - name: "echo_with_args"
+    command: "echo"
+    args:
+      - "Hello"
+      - "World"
+  - name: "echo_with_params"
+    command: "echo"
+    args:
+      - "First param is: $1"
+      - "Second param is: $2"
+    depends:
+      - echo_with_args
+  - name: "mkdir_with_args"
+    command: "mkdir"
+    args:
+      - "-p"
+      - "/tmp/test_dir_$1"
+    depends:
+      - echo_with_params
+  - name: "ls_with_args"
+    command: "ls"
+    args:
+      - "-la"
+      - "/tmp"
+    depends:
+      - mkdir_with_args

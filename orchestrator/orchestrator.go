@@ -597,6 +597,15 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 
 	replacedCommand := replaceParams(node.Command, params)
 
+	// Replace parameters in args if args are provided
+	var replacedArgs []string
+	if len(node.Args) > 0 {
+		replacedArgs = make([]string, len(node.Args))
+		for i, arg := range node.Args {
+			replacedArgs[i] = replaceParams(arg, params)
+		}
+	}
+
 	// Retry policies
 	retries := 0
 	if node.RetryPolicy != nil {
@@ -609,7 +618,15 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			return fmt.Errorf("cancelled")
 		}
 
-		cmd := exec.CommandContext(ctx, "sh", "-c", replacedCommand)
+		// Execute command directly with args if args are provided, otherwise use sh -c for backward compatibility
+		var cmd *exec.Cmd
+		if len(node.Args) > 0 {
+			// Execute command directly with args (not via sh -c)
+			cmd = exec.CommandContext(ctx, replacedCommand, replacedArgs...)
+		} else {
+			// Use sh -c for backward compatibility when no args are provided
+			cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
+		}
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 
