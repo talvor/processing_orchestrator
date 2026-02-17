@@ -597,10 +597,13 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 
 	replacedCommand := replaceParams(node.Command, params)
 
-	// Replace parameters in args
-	replacedArgs := make([]string, len(node.Args))
-	for i, arg := range node.Args {
-		replacedArgs[i] = replaceParams(arg, params)
+	// Replace parameters in args if args are provided
+	var replacedArgs []string
+	if len(node.Args) > 0 {
+		replacedArgs = make([]string, len(node.Args))
+		for i, arg := range node.Args {
+			replacedArgs[i] = replaceParams(arg, params)
+		}
 	}
 
 	// Retry policies
