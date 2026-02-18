@@ -629,3 +629,160 @@ if value != "captured and displayed" {
 t.Errorf("Expected 'displayedVar' to be 'captured and displayed', got '%s'", value)
 }
 }
+
+// TestScriptExecution tests that a script can be executed
+func TestScriptExecution(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name: "A",
+				Script: `#!/bin/sh
+echo "Hello from script"`,
+				Output: &dag.Output{
+					Stdout: "scriptOutput",
+				},
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG, nil)
+	err := orchestrator.Execute()
+	if err != nil {
+		t.Errorf("Expected script execution to succeed, but got error: %v", err)
+	}
+
+	// Verify the script output was captured
+	orchestrator.outputMu.RLock()
+	value, exists := orchestrator.outputVars["scriptOutput"]
+	orchestrator.outputMu.RUnlock()
+
+	if !exists {
+		t.Errorf("Expected 'scriptOutput' variable to be captured")
+	}
+	if value != "Hello from script" {
+		t.Errorf("Expected output to be 'Hello from script', got '%s'", value)
+	}
+}
+
+// TestScriptWithParams tests that workflow params are available in scripts as environment variables
+func TestScriptWithParams(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Params: []string{"value1", "value2"},
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name: "A",
+				Script: `#!/bin/sh
+test "$PARAM_1" = "value1" || exit 1
+test "$PARAM_2" = "value2" || exit 1`,
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG, nil)
+	err := orchestrator.Execute()
+	if err != nil {
+		t.Errorf("Expected script with params to succeed, but got error: %v", err)
+	}
+}
+
+// TestScriptWithParamReplacement tests that params are replaced in script content
+func TestScriptWithParamReplacement(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Params: []string{"test_value"},
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name: "A",
+				Script: `#!/bin/sh
+echo "$1"`,
+				Output: &dag.Output{
+					Stdout: "result",
+				},
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG, nil)
+	err := orchestrator.Execute()
+	if err != nil {
+		t.Errorf("Expected script with param replacement to succeed, but got error: %v", err)
+	}
+
+	// Check that the variable was captured with param replaced
+	orchestrator.outputMu.RLock()
+	value, exists := orchestrator.outputVars["result"]
+	orchestrator.outputMu.RUnlock()
+
+	if !exists {
+		t.Errorf("Expected 'result' variable to be captured")
+	}
+	if value != "test_value" {
+		t.Errorf("Expected 'result' to be 'test_value', got '%s'", value)
+	}
+}
+
+// TestScriptWithOutputVars tests that output variables from previous steps are available in scripts
+func TestScriptWithOutputVars(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name:    "A",
+				Command: "echo 'prev_value'",
+				Output: &dag.Output{
+					Stdout: "myVar",
+				},
+			},
+			"B": {
+				Name: "B",
+				Script: `#!/bin/sh
+test "$myVar" = "prev_value" || exit 1
+echo "success"`,
+				Depends: []string{"A"},
+				Output: &dag.Output{
+					Stdout: "result",
+				},
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG, nil)
+	err := orchestrator.Execute()
+	if err != nil {
+		t.Errorf("Expected script with output vars to succeed, but got error: %v", err)
+	}
+
+	// Check that the variable was captured
+	orchestrator.outputMu.RLock()
+	value, exists := orchestrator.outputVars["result"]
+	orchestrator.outputMu.RUnlock()
+
+	if !exists {
+		t.Errorf("Expected 'result' variable to be captured")
+	}
+	if value != "success" {
+		t.Errorf("Expected 'result' to be 'success', got '%s'", value)
+	}
+}
+
+// TestScriptWithRetryPolicy tests that retry policy works with scripts
+func TestScriptWithRetryPolicy(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name: "A",
+				Script: `#!/bin/sh
+exit 1`,
+				RetryPolicy: &dag.RetryPolicy{
+					Limit: 2,
+				},
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG, nil)
+	err := orchestrator.Execute()
+	// Should fail after retries
+	if err == nil {
+		t.Errorf("Expected script with retries to fail, but it succeeded")
+	}
+}
+

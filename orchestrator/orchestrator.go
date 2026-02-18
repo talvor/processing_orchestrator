@@ -604,17 +604,6 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 		}
 	}
 
-	replacedCommand := wo.replaceParams(node.Command, params)
-
-	// Replace parameters in args if args are provided
-	var replacedArgs []string
-	if len(node.Args) > 0 {
-		replacedArgs = make([]string, len(node.Args))
-		for i, arg := range node.Args {
-			replacedArgs[i] = wo.replaceParams(arg, params)
-		}
-	}
-
 	// Retry policies
 	retries := 0
 	if node.RetryPolicy != nil {
@@ -627,14 +616,71 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			return fmt.Errorf("cancelled")
 		}
 
-		// Execute command directly with args if args are provided, otherwise use sh -c for backward compatibility
 		var cmd *exec.Cmd
-		if len(node.Args) > 0 {
-			// Execute command directly with args (not via sh -c)
-			cmd = exec.CommandContext(ctx, replacedCommand, replacedArgs...)
+		
+		// Determine if this is a script or command execution
+		if node.Script != "" {
+			// Create a temporary file for the script
+			tmpFile, err := os.CreateTemp("", "workflow-script-*.sh")
+			if err != nil {
+				return fmt.Errorf("failed to create temporary script file: %w", err)
+			}
+			tmpFilePath := tmpFile.Name()
+			defer os.Remove(tmpFilePath)
+
+			// Replace parameters in script content
+			scriptContent := wo.replaceParams(node.Script, params)
+
+			// Write script content to temp file
+			if _, err := tmpFile.WriteString(scriptContent); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("failed to write script to temporary file: %w", err)
+			}
+			tmpFile.Close()
+
+			// Make the script executable (read and execute only for security)
+			if err := os.Chmod(tmpFilePath, 0500); err != nil {
+				return fmt.Errorf("failed to make script executable: %w", err)
+			}
+
+			// Execute the script with sh
+			cmd = exec.CommandContext(ctx, "sh", tmpFilePath)
+
+			// Set up environment variables for the script
+			cmd.Env = os.Environ()
+			
+			// Export workflow params as environment variables
+			for i, v := range wo.Dag.Params {
+				cmd.Env = append(cmd.Env, fmt.Sprintf("PARAM_%d=%s", i+1, v))
+			}
+			
+			// Export output variables from previous steps
+			wo.outputMu.RLock()
+			for varName, value := range wo.outputVars {
+				cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", varName, value))
+			}
+			wo.outputMu.RUnlock()
 		} else {
-			// Use sh -c for backward compatibility when no args are provided
-			cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
+			// Handle command execution (existing logic)
+			replacedCommand := wo.replaceParams(node.Command, params)
+
+			// Replace parameters in args if args are provided
+			var replacedArgs []string
+			if len(node.Args) > 0 {
+				replacedArgs = make([]string, len(node.Args))
+				for i, arg := range node.Args {
+					replacedArgs[i] = wo.replaceParams(arg, params)
+				}
+			}
+
+			// Execute command directly with args if args are provided, otherwise use sh -c for backward compatibility
+			if len(node.Args) > 0 {
+				// Execute command directly with args (not via sh -c)
+				cmd = exec.CommandContext(ctx, replacedCommand, replacedArgs...)
+			} else {
+				// Use sh -c for backward compatibility when no args are provided
+				cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
+			}
 		}
 
 		// Setup output capture for variables

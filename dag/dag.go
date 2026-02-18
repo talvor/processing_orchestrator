@@ -6,6 +6,7 @@ type Node struct {
 	Name            string       // Unique name of the step
 	Description     string       // Description of this step
 	Command         string       // Command to run for the step
+	Script          string       // Script to run for the step (multiline string)
 	Args            []string     // Arguments for the command
 	Depends         []string     // Steps this step depends on
 	Preconditions   []Condition  // Preconditions for this step

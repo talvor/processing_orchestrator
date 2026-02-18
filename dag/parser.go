@@ -35,7 +35,8 @@ type Output struct {
 type Step struct {
 	Name            string       `yaml:"name"`                        // Unique name of the step
 	Description     string       `yaml:"description,omitempty"`       // Description of this step
-	Command         string       `yaml:"command"`                     // Command to run for the step
+	Command         string       `yaml:"command,omitempty"`           // Command to run for the step
+	Script          string       `yaml:"script,omitempty"`            // Script to run for the step (multiline YAML string)
 	Args            []string     `yaml:"args,omitempty"`              // Arguments for the command
 	Depends         []string     `yaml:"depends"`                     // Steps this step depends on
 	Preconditions   []Condition  `yaml:"preconditions,omitempty"`     // Preconditions for this step
@@ -77,6 +78,7 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 		node := &Node{
 			Name:            step.Name,
 			Command:         step.Command,
+			Script:          step.Script,
 			Args:            step.Args,
 			Depends:         step.Depends,
 			Description:     step.Description,
