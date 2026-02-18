@@ -638,8 +638,8 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			}
 			tmpFile.Close()
 
-			// Make the script executable
-			if err := os.Chmod(tmpFilePath, 0700); err != nil {
+			// Make the script executable (read and execute only for security)
+			if err := os.Chmod(tmpFilePath, 0500); err != nil {
 				return fmt.Errorf("failed to make script executable: %w", err)
 			}
 

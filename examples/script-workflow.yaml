@@ -36,7 +36,18 @@ steps:
     console:
       stdout: true
 
-  # Step 4: Script with parameter replacement in the script content itself
+  # Step 4: Cleanup temporary file
+  - name: cleanup_temp_file
+    script: |
+      #!/bin/sh
+      rm -f /tmp/test_$myValue.txt
+      echo "Cleaned up temporary file"
+    depends:
+      - use_output_variable
+    console:
+      stdout: true
+
+  # Step 5: Script with parameter replacement in the script content itself
   - name: script_with_params
     script: |
       #!/bin/sh
@@ -44,11 +55,11 @@ steps:
       echo "Script with inline second param: $2"
       echo "Script with env param: $PARAM_1"
     depends:
-      - use_output_variable
+      - cleanup_temp_file
     console:
       stdout: true
 
-  # Step 5: Script that outputs a value for later use
+  # Step 6: Script that outputs a value for later use
   - name: script_with_output
     script: |
       #!/bin/sh
@@ -56,7 +67,7 @@ steps:
     output:
       stdout: scriptOutput
 
-  # Step 6: Use the output from the script step
+  # Step 7: Use the output from the script step
   - name: use_script_output
     command: "echo 'Output from script: $scriptOutput'"
     depends:

@@ -638,6 +638,9 @@ func TestScriptExecution(t *testing.T) {
 				Name: "A",
 				Script: `#!/bin/sh
 echo "Hello from script"`,
+				Output: &dag.Output{
+					Stdout: "scriptOutput",
+				},
 			},
 		},
 	}
@@ -646,6 +649,18 @@ echo "Hello from script"`,
 	err := orchestrator.Execute()
 	if err != nil {
 		t.Errorf("Expected script execution to succeed, but got error: %v", err)
+	}
+
+	// Verify the script output was captured
+	orchestrator.outputMu.RLock()
+	value, exists := orchestrator.outputVars["scriptOutput"]
+	orchestrator.outputMu.RUnlock()
+
+	if !exists {
+		t.Errorf("Expected 'scriptOutput' variable to be captured")
+	}
+	if value != "Hello from script" {
+		t.Errorf("Expected output to be 'Hello from script', got '%s'", value)
 	}
 }
 
