@@ -758,7 +758,6 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 		if err != nil {
 			return err
 		}
-		defer cleanup()
 
 		// Setup output capture for variables
 		var stdoutBuf, stderrBuf strings.Builder
@@ -767,14 +766,19 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 		wo.configureOutputStreams(cmd, node, &stdoutBuf, &stderrBuf)
 
 		// Execute command
-		if err := cmd.Run(); err != nil {
+		execErr := cmd.Run()
+		
+		// Clean up resources (e.g., temporary script files)
+		cleanup()
+
+		if execErr != nil {
 			// Check if error was due to context cancellation
 			if ctx.Err() != nil {
 				return fmt.Errorf("cancelled")
 			}
 
 			if attempt == retries {
-				return fmt.Errorf("failed after %d attempts: %w", retries+1, err)
+				return fmt.Errorf("failed after %d attempts: %w", retries+1, execErr)
 			}
 			continue
 		}
