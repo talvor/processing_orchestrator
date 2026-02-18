@@ -556,37 +556,34 @@ func (wo *Orchestrator) replaceParams(input string, params map[string]string) st
 	return result
 }
 
-func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName string) error {
-	node, exists := wo.Dag.Nodes[nodeName]
-	if !exists {
-		return fmt.Errorf("node '%s' not found in DAG", nodeName)
+// checkWhenCondition checks if the node's when condition is met
+func (wo *Orchestrator) checkWhenCondition(ctx context.Context, node *dag.Node, params map[string]string) error {
+	if node.When == nil {
+		return nil
 	}
 
-	params := map[string]string{}
-	for i, v := range wo.Dag.Params {
-		params[fmt.Sprintf("%d", i+1)] = v
+	predicate := wo.replaceParams(node.When.Predicate, params)
+	expected := wo.replaceParams(node.When.Expected, params)
+	cmd := exec.CommandContext(ctx, "sh", "-c", predicate)
+	output, err := cmd.Output()
+
+	// Check if context was cancelled
+	if ctx.Err() != nil {
+		return fmt.Errorf("node '%s' cancelled", node.Name)
 	}
 
-	if node.When != nil {
-		predicate := wo.replaceParams(node.When.Predicate, params)
-		expected := wo.replaceParams(node.When.Expected, params)
-		cmd := exec.CommandContext(ctx, "sh", "-c", predicate)
-		output, err := cmd.Output()
-
-		// Check if context was cancelled
-		if ctx.Err() != nil {
-			return fmt.Errorf("node '%s' cancelled", node.Name)
-		}
-
-		actual := strings.TrimSpace(string(output))
-		if err != nil || actual != expected {
-			return &WhenConditionNotMetError{
-				Message: fmt.Sprintf("when condition not met: expected '%s', got '%s'", expected, actual),
-			}
+	actual := strings.TrimSpace(string(output))
+	if err != nil || actual != expected {
+		return &WhenConditionNotMetError{
+			Message: fmt.Sprintf("when condition not met: expected '%s', got '%s'", expected, actual),
 		}
 	}
 
-	// Check preconditions
+	return nil
+}
+
+// checkPreconditions checks all preconditions for the node
+func (wo *Orchestrator) checkPreconditions(ctx context.Context, node *dag.Node, params map[string]string) error {
 	for _, precondition := range node.Preconditions {
 		predicate := wo.replaceParams(precondition.Predicate, params)
 		expected := wo.replaceParams(precondition.Expected, params)
@@ -604,7 +601,147 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 		}
 	}
 
-	// Retry policies
+	return nil
+}
+
+// prepareCommand creates the exec.Cmd for the node (either script or command)
+func (wo *Orchestrator) prepareCommand(ctx context.Context, node *dag.Node, params map[string]string) (*exec.Cmd, func(), error) {
+	// Determine if this is a script or command execution
+	if node.Script != "" {
+		return wo.prepareScriptCommand(ctx, node, params)
+	}
+	return wo.prepareRegularCommand(ctx, node, params)
+}
+
+// prepareScriptCommand creates a command for script execution
+func (wo *Orchestrator) prepareScriptCommand(ctx context.Context, node *dag.Node, params map[string]string) (*exec.Cmd, func(), error) {
+	// Create a temporary file for the script
+	tmpFile, err := os.CreateTemp("", "workflow-script-*.sh")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create temporary script file: %w", err)
+	}
+	tmpFilePath := tmpFile.Name()
+
+	// Replace parameters in script content
+	scriptContent := wo.replaceParams(node.Script, params)
+
+	// Write script content to temp file
+	if _, err := tmpFile.WriteString(scriptContent); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFilePath)
+		return nil, nil, fmt.Errorf("failed to write script to temporary file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Make the script executable (read and execute only for security)
+	if err := os.Chmod(tmpFilePath, 0500); err != nil {
+		os.Remove(tmpFilePath)
+		return nil, nil, fmt.Errorf("failed to make script executable: %w", err)
+	}
+
+	// Execute the script with sh
+	cmd := exec.CommandContext(ctx, "sh", tmpFilePath)
+
+	// Set up environment variables for the script
+	cmd.Env = os.Environ()
+
+	// Export workflow params as environment variables
+	for i, v := range wo.Dag.Params {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("PARAM_%d=%s", i+1, v))
+	}
+
+	// Export output variables from previous steps
+	wo.outputMu.RLock()
+	for varName, value := range wo.outputVars {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", varName, value))
+	}
+	wo.outputMu.RUnlock()
+
+	// Return cleanup function to remove temp file
+	cleanup := func() {
+		os.Remove(tmpFilePath)
+	}
+
+	return cmd, cleanup, nil
+}
+
+// prepareRegularCommand creates a command for regular command execution
+func (wo *Orchestrator) prepareRegularCommand(ctx context.Context, node *dag.Node, params map[string]string) (*exec.Cmd, func(), error) {
+	replacedCommand := wo.replaceParams(node.Command, params)
+
+	// Replace parameters in args if args are provided
+	var replacedArgs []string
+	if len(node.Args) > 0 {
+		replacedArgs = make([]string, len(node.Args))
+		for i, arg := range node.Args {
+			replacedArgs[i] = wo.replaceParams(arg, params)
+		}
+	}
+
+	var cmd *exec.Cmd
+	// Execute command directly with args if args are provided, otherwise use sh -c for backward compatibility
+	if len(node.Args) > 0 {
+		// Execute command directly with args (not via sh -c)
+		cmd = exec.CommandContext(ctx, replacedCommand, replacedArgs...)
+	} else {
+		// Use sh -c for backward compatibility when no args are provided
+		cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
+	}
+
+	// No cleanup needed for regular commands
+	return cmd, func() {}, nil
+}
+
+// configureOutputStreams sets up stdout and stderr for the command based on Console and Output configuration
+func (wo *Orchestrator) configureOutputStreams(cmd *exec.Cmd, node *dag.Node, stdoutBuf, stderrBuf *strings.Builder) {
+	// Configure stdout based on Console and Output configuration
+	if node.Output != nil && node.Output.Stdout != "" {
+		// Capture stdout to variable
+		if node.Console != nil && node.Console.Stdout {
+			// Also write to console
+			cmd.Stdout = io.MultiWriter(os.Stdout, stdoutBuf)
+		} else {
+			cmd.Stdout = stdoutBuf
+		}
+	} else if node.Console != nil && node.Console.Stdout {
+		// Only console output, no capture
+		cmd.Stdout = os.Stdout
+	}
+
+	// Configure stderr based on Console and Output configuration
+	if node.Output != nil && node.Output.Stderr != "" {
+		// Capture stderr to variable
+		if node.Console != nil && node.Console.Stderr {
+			// Also write to console
+			cmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
+		} else {
+			cmd.Stderr = stderrBuf
+		}
+	} else if node.Console != nil && node.Console.Stderr {
+		// Only console output, no capture
+		cmd.Stderr = os.Stderr
+	}
+}
+
+// storeOutputVariables saves the captured output to the orchestrator's output variables
+func (wo *Orchestrator) storeOutputVariables(node *dag.Node, stdoutBuf, stderrBuf *strings.Builder) {
+	if node.Output == nil {
+		return
+	}
+
+	wo.outputMu.Lock()
+	defer wo.outputMu.Unlock()
+
+	if node.Output.Stdout != "" {
+		wo.outputVars[node.Output.Stdout] = strings.TrimSpace(stdoutBuf.String())
+	}
+	if node.Output.Stderr != "" {
+		wo.outputVars[node.Output.Stderr] = strings.TrimSpace(stderrBuf.String())
+	}
+}
+
+// executeWithRetry executes the node's command with retry logic
+func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, params map[string]string) error {
 	retries := 0
 	if node.RetryPolicy != nil {
 		retries = node.RetryPolicy.Limit
@@ -616,131 +753,71 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 			return fmt.Errorf("cancelled")
 		}
 
-		var cmd *exec.Cmd
-		
-		// Determine if this is a script or command execution
-		if node.Script != "" {
-			// Create a temporary file for the script
-			tmpFile, err := os.CreateTemp("", "workflow-script-*.sh")
-			if err != nil {
-				return fmt.Errorf("failed to create temporary script file: %w", err)
-			}
-			tmpFilePath := tmpFile.Name()
-			defer os.Remove(tmpFilePath)
-
-			// Replace parameters in script content
-			scriptContent := wo.replaceParams(node.Script, params)
-
-			// Write script content to temp file
-			if _, err := tmpFile.WriteString(scriptContent); err != nil {
-				tmpFile.Close()
-				return fmt.Errorf("failed to write script to temporary file: %w", err)
-			}
-			tmpFile.Close()
-
-			// Make the script executable (read and execute only for security)
-			if err := os.Chmod(tmpFilePath, 0500); err != nil {
-				return fmt.Errorf("failed to make script executable: %w", err)
-			}
-
-			// Execute the script with sh
-			cmd = exec.CommandContext(ctx, "sh", tmpFilePath)
-
-			// Set up environment variables for the script
-			cmd.Env = os.Environ()
-			
-			// Export workflow params as environment variables
-			for i, v := range wo.Dag.Params {
-				cmd.Env = append(cmd.Env, fmt.Sprintf("PARAM_%d=%s", i+1, v))
-			}
-			
-			// Export output variables from previous steps
-			wo.outputMu.RLock()
-			for varName, value := range wo.outputVars {
-				cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", varName, value))
-			}
-			wo.outputMu.RUnlock()
-		} else {
-			// Handle command execution (existing logic)
-			replacedCommand := wo.replaceParams(node.Command, params)
-
-			// Replace parameters in args if args are provided
-			var replacedArgs []string
-			if len(node.Args) > 0 {
-				replacedArgs = make([]string, len(node.Args))
-				for i, arg := range node.Args {
-					replacedArgs[i] = wo.replaceParams(arg, params)
-				}
-			}
-
-			// Execute command directly with args if args are provided, otherwise use sh -c for backward compatibility
-			if len(node.Args) > 0 {
-				// Execute command directly with args (not via sh -c)
-				cmd = exec.CommandContext(ctx, replacedCommand, replacedArgs...)
-			} else {
-				// Use sh -c for backward compatibility when no args are provided
-				cmd = exec.CommandContext(ctx, "sh", "-c", replacedCommand)
-			}
+		// Prepare command (creates a new temp file for each attempt if using scripts)
+		cmd, cleanup, err := wo.prepareCommand(ctx, node, params)
+		if err != nil {
+			return err
 		}
 
 		// Setup output capture for variables
 		var stdoutBuf, stderrBuf strings.Builder
 
-		// Configure stdout and stderr based on Console and Output configuration
-		if node.Output != nil && node.Output.Stdout != "" {
-			// Capture stdout to variable
-			if node.Console != nil && node.Console.Stdout {
-				// Also write to console
-				cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
-			} else {
-				cmd.Stdout = &stdoutBuf
-			}
-		} else if node.Console != nil && node.Console.Stdout {
-			// Only console output, no capture
-			cmd.Stdout = os.Stdout
-		}
+		// Configure output streams
+		wo.configureOutputStreams(cmd, node, &stdoutBuf, &stderrBuf)
 
-		if node.Output != nil && node.Output.Stderr != "" {
-			// Capture stderr to variable
-			if node.Console != nil && node.Console.Stderr {
-				// Also write to console
-				cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-			} else {
-				cmd.Stderr = &stderrBuf
-			}
-		} else if node.Console != nil && node.Console.Stderr {
-			// Only console output, no capture
-			cmd.Stderr = os.Stderr
-		}
+		// Execute command
+		execErr := cmd.Run()
+		
+		// Clean up resources after execution completes (e.g., delete temporary script files)
+		// This is safe because the file has been fully read and executed by this point
+		cleanup()
 
-		if err := cmd.Run(); err != nil {
+		if execErr != nil {
 			// Check if error was due to context cancellation
 			if ctx.Err() != nil {
 				return fmt.Errorf("cancelled")
 			}
 
 			if attempt == retries {
-				return fmt.Errorf("failed after %d attempts: %w", retries+1, err)
+				return fmt.Errorf("failed after %d attempts: %w", retries+1, execErr)
 			}
+			// Retry - a new temp file will be created on the next iteration
 			continue
 		}
 
 		// Successful execution - store output variables if configured
-		if node.Output != nil {
-			wo.outputMu.Lock()
-			if node.Output.Stdout != "" {
-				wo.outputVars[node.Output.Stdout] = strings.TrimSpace(stdoutBuf.String())
-			}
-			if node.Output.Stderr != "" {
-				wo.outputVars[node.Output.Stderr] = strings.TrimSpace(stderrBuf.String())
-			}
-			wo.outputMu.Unlock()
-		}
+		wo.storeOutputVariables(node, &stdoutBuf, &stderrBuf)
 
 		return nil
 	}
 
 	return nil
+}
+
+func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName string) error {
+	node, exists := wo.Dag.Nodes[nodeName]
+	if !exists {
+		return fmt.Errorf("node '%s' not found in DAG", nodeName)
+	}
+
+	// Build params map
+	params := map[string]string{}
+	for i, v := range wo.Dag.Params {
+		params[fmt.Sprintf("%d", i+1)] = v
+	}
+
+	// Check when condition
+	if err := wo.checkWhenCondition(ctx, node, params); err != nil {
+		return err
+	}
+
+	// Check preconditions
+	if err := wo.checkPreconditions(ctx, node, params); err != nil {
+		return err
+	}
+
+	// Execute with retry logic
+	return wo.executeWithRetry(ctx, node, params)
 }
 
 func (wo *Orchestrator) executeNode(nodeName string) error {
