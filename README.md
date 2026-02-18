@@ -19,11 +19,18 @@ Each step in the workflow can have the following properties:
 
 #### Required Properties
 - **`name`** *(string)*: Unique identifier for the step.
-- **`command`** *(string)*: The command to execute for this step.
+
+**Note:** Each step must have either a `command` OR a `script` property, but not both.
+
+- **`command`** *(string)*: The command to execute for this step. Use this for simple commands or when using the `args` property.
+- **`script`** *(multiline string)*: A shell script to execute for this step. Use this for multi-line scripts or complex logic. The script can access:
+  - Workflow parameters as environment variables: `$PARAM_1`, `$PARAM_2`, etc.
+  - Output variables from previous steps as environment variables: `$variableName`
+  - Parameters can also be referenced inline in the script using `$1`, `$2`, etc. (these get replaced before execution)
 
 #### Optional Properties
 - **`description`** *(string)*: A human-readable description of what the step does.
-- **`args`** *(array of strings)*: Arguments to pass to the command. These are passed as separate arguments, not concatenated to the command string.
+- **`args`** *(array of strings)*: Arguments to pass to the command. These are passed as separate arguments, not concatenated to the command string. Only used with `command`, not with `script`.
 - **`depends`** *(array of strings)*: List of step names that must complete successfully before this step can execute.
 - **`preconditions`** *(array of conditions)*: Conditions that must be met before the step executes. Each condition has:
   - `predicate`: Command to execute that returns a result
@@ -40,6 +47,46 @@ Each step in the workflow can have the following properties:
 - **`output`** *(object)*: Captures command output to variables for use in later steps:
   - `stdout`: Variable name to store standard output
   - `stderr`: Variable name to store standard error
+
+### Script Execution
+
+Steps can execute shell scripts using the `script` property instead of `command`. This is useful for complex logic that spans multiple lines or requires shell-specific features.
+
+**Script Features:**
+- Scripts can be multi-line YAML strings using the `|` or `>` syntax
+- Workflow parameters are available both:
+  - As environment variables: `$PARAM_1`, `$PARAM_2`, etc.
+  - Via inline replacement: `$1`, `$2`, etc. (replaced before script execution)
+- Output variables from previous steps are available as environment variables
+- Scripts support all standard step features (console output, output capture, retry policies, etc.)
+
+**Example:**
+```yaml
+steps:
+  - name: generate_value
+    command: "echo 'myvalue'"
+    output:
+      stdout: myVar
+
+  - name: complex_script
+    script: |
+      #!/bin/sh
+      echo "Workflow param 1: $PARAM_1"
+      echo "Workflow param 2: $PARAM_2"
+      echo "Output from previous step: $myVar"
+      
+      # Complex logic
+      if [ "$PARAM_1" = "production" ]; then
+        echo "Running in production mode"
+        # Additional production logic
+      else
+        echo "Running in development mode"
+      fi
+    depends:
+      - generate_value
+    console:
+      stdout: true
+```
 
 ### Console Output
 
@@ -64,6 +111,7 @@ output:
 Variables can be referenced in later steps using `$variableName` syntax in:
 - Commands
 - Command arguments  
+- Scripts (as environment variables or inline replacement)
 - Preconditions
 - When conditions
 
@@ -174,9 +222,10 @@ env:                                      # Optional: Environment variables
 params: param1 param2                     # Optional: Space-separated parameters
 
 steps:
+  # Example with command
   - name: "step_name"                     # Required: Unique step identifier
     description: "What this step does"    # Optional: Human-readable description
-    command: "command_to_run"             # Required: The command to execute
+    command: "command_to_run"             # Either command OR script required
     args:                                 # Optional: Command arguments as array
       - "--flag"
       - "value"
@@ -197,6 +246,22 @@ steps:
     output:                               # Optional: Capture output to variables
       stdout: myVariable
       stderr: errorVariable
+
+  # Example with script
+  - name: "script_step"                   # Required: Unique step identifier
+    description: "Script-based step"      # Optional: Human-readable description
+    script: |                             # Either command OR script required
+      #!/bin/sh
+      echo "Param 1: $PARAM_1"
+      echo "Param 2: $PARAM_2"
+      echo "Previous output: $myVariable"
+      # Complex multi-line logic here
+    depends:                              # Optional: Dependencies on other steps
+      - "step_name"
+    console:                              # Optional: Console output settings
+      stdout: true
+    output:                               # Optional: Capture output to variables
+      stdout: scriptResult
 ```
 
 ## Examples
@@ -208,6 +273,7 @@ The `examples/` directory contains several workflow examples demonstrating vario
 - `console-with-conditions.yaml` - Conditional execution examples
 - `output-variables-workflow.yaml` - Capturing and using output variables
 - `args-workflow.yaml` - Using command arguments
+- `script-workflow.yaml` - Using shell scripts with params and output variables
 - `single-workflow.yaml` - Minimal single-step workflow
 
 ## Example Workflow Execution
