@@ -753,7 +753,7 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 			return fmt.Errorf("cancelled")
 		}
 
-		// Prepare command
+		// Prepare command (creates a new temp file for each attempt if using scripts)
 		cmd, cleanup, err := wo.prepareCommand(ctx, node, params)
 		if err != nil {
 			return err
@@ -768,7 +768,8 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 		// Execute command
 		execErr := cmd.Run()
 		
-		// Clean up resources (e.g., temporary script files)
+		// Clean up resources after execution completes (e.g., delete temporary script files)
+		// This is safe because the file has been fully read and executed by this point
 		cleanup()
 
 		if execErr != nil {
@@ -780,6 +781,7 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 			if attempt == retries {
 				return fmt.Errorf("failed after %d attempts: %w", retries+1, execErr)
 			}
+			// Retry - a new temp file will be created on the next iteration
 			continue
 		}
 
