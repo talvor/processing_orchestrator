@@ -1,0 +1,65 @@
+# Example Workflow demonstrating script execution feature
+# Scripts can access workflow params and output variables from previous steps
+
+name: Script Execution Demo
+params: test_param another_value
+
+steps:
+  # Step 1: Simple script that uses workflow params
+  - name: simple_script
+    script: |
+      #!/bin/sh
+      echo "Running script with params:"
+      echo "Param 1: $PARAM_1"
+      echo "Param 2: $PARAM_2"
+    console:
+      stdout: true
+
+  # Step 2: Generate a value and store it
+  - name: generate_value
+    command: "echo 'test_value_123'"
+    output:
+      stdout: myValue
+    depends:
+      - simple_script
+
+  # Step 3: Script that uses output variables from previous steps
+  - name: use_output_variable
+    script: |
+      #!/bin/sh
+      echo "Value from previous step: $myValue"
+      echo "Creating file with value: /tmp/test_$myValue.txt"
+      echo "Content" > /tmp/test_$myValue.txt
+      ls -la /tmp/test_$myValue.txt
+    depends:
+      - generate_value
+    console:
+      stdout: true
+
+  # Step 4: Script with parameter replacement in the script content itself
+  - name: script_with_params
+    script: |
+      #!/bin/sh
+      echo "Script with inline param: $1"
+      echo "Script with inline second param: $2"
+      echo "Script with env param: $PARAM_1"
+    depends:
+      - use_output_variable
+    console:
+      stdout: true
+
+  # Step 5: Script that outputs a value for later use
+  - name: script_with_output
+    script: |
+      #!/bin/sh
+      echo "script_output_value"
+    output:
+      stdout: scriptOutput
+
+  # Step 6: Use the output from the script step
+  - name: use_script_output
+    command: "echo 'Output from script: $scriptOutput'"
+    depends:
+      - script_with_output
+    console:
+      stdout: true
