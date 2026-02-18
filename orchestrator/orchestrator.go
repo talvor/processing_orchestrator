@@ -27,7 +27,6 @@ type Orchestrator struct {
 	Dag         *dag.DAG
 	WorkerCount int               // Maximum number of concurrent workers
 	logger      ExecutionLogger   // Pluggable logger
-	parentCtx   context.Context   // Optional parent context
 	outputVars  map[string]string // Stores output variables from steps
 	outputMu    sync.RWMutex      // Mutex for thread-safe access to outputVars
 }
@@ -46,17 +45,16 @@ type nodeState struct {
 	mu             sync.Mutex
 }
 
-func NewOrchestrator(dag *dag.DAG, parentCtx context.Context) *Orchestrator {
-	return NewOrchestratorWithWorkers(dag, 5, parentCtx) // Default to 5 workers
+func NewOrchestrator(dag *dag.DAG) *Orchestrator {
+	return NewOrchestratorWithWorkers(dag, 5) // Default to 5 workers
 }
 
 // NewOrchestratorWithWorkers creates an orchestrator with a specific worker count
-func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int, parentCtx context.Context) *Orchestrator {
+func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
 		WorkerCount: workerCount,
-		logger:      NewNoOpLogger(), // Default to noop logger
-		parentCtx:   parentCtx,
+		logger:      NewNoOpLogger(),         // Default to noop logger
 		outputVars:  make(map[string]string), // Initialize output variables map
 	}
 }
@@ -123,7 +121,7 @@ func (wo *Orchestrator) logNodeEvent(nodeName string, event ExecutionEvent, stat
 	wo.logger.OnNodeEvent(data)
 }
 
-func (wo *Orchestrator) Execute() error {
+func (wo *Orchestrator) Execute(ctx context.Context) error {
 	start := time.Now()
 	dagSnapshot := wo.createDAGSnapshot()
 
@@ -165,12 +163,7 @@ func (wo *Orchestrator) Execute() error {
 	}
 
 	// Error handling and cancellation
-	// Use parent context if provided, otherwise use background context
-	baseCtx := context.Background()
-	if wo.parentCtx != nil {
-		baseCtx = wo.parentCtx
-	}
-	ctx, cancel := context.WithCancel(baseCtx)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var executionError error
@@ -634,7 +627,7 @@ func (wo *Orchestrator) prepareScriptCommand(ctx context.Context, node *dag.Node
 	tmpFile.Close()
 
 	// Make the script executable (read and execute only for security)
-	if err := os.Chmod(tmpFilePath, 0500); err != nil {
+	if err := os.Chmod(tmpFilePath, 0o500); err != nil {
 		os.Remove(tmpFilePath)
 		return nil, nil, fmt.Errorf("failed to make script executable: %w", err)
 	}
@@ -767,7 +760,7 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 
 		// Execute command
 		execErr := cmd.Run()
-		
+
 		// Clean up resources after execution completes (e.g., delete temporary script files)
 		// This is safe because the file has been fully read and executed by this point
 		cleanup()

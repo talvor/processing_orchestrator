@@ -30,22 +30,22 @@ type WorkflowMessage struct {
 
 // SQSConsumer handles receiving messages from SQS and processing workflows
 type SQSConsumer struct {
-	sqsClient      SQSClientAPI
-	queueURL       string
-	maxMessages    int32
-	waitTimeSeconds int32
-	visibilityTimeout int32
+	sqsClient                SQSClientAPI
+	queueURL                 string
+	maxMessages              int32
+	waitTimeSeconds          int32
+	visibilityTimeout        int32
 	visibilityExtendInterval time.Duration
 }
 
 // NewSQSConsumer creates a new SQS consumer instance
 func NewSQSConsumer(sqsClient SQSClientAPI, queueURL string) *SQSConsumer {
 	return &SQSConsumer{
-		sqsClient:      sqsClient,
-		queueURL:       queueURL,
-		maxMessages:    10, // Default batch size
-		waitTimeSeconds: 20, // Long polling
-		visibilityTimeout: 30, // Initial visibility timeout in seconds
+		sqsClient:                sqsClient,
+		queueURL:                 queueURL,
+		maxMessages:              10,               // Default batch size
+		waitTimeSeconds:          20,               // Long polling
+		visibilityTimeout:        30,               // Initial visibility timeout in seconds
 		visibilityExtendInterval: 10 * time.Second, // Extend every 10 seconds
 	}
 }
@@ -63,7 +63,7 @@ func (c *SQSConsumer) SetVisibilityTimeout(timeout int32) {
 // Start begins consuming messages from the SQS queue
 func (c *SQSConsumer) Start(ctx context.Context) error {
 	log.Println("Starting SQS consumer...")
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -86,17 +86,16 @@ func (c *SQSConsumer) processBatch(ctx context.Context) error {
 		WaitTimeSeconds:     c.waitTimeSeconds,
 		VisibilityTimeout:   c.visibilityTimeout,
 	})
-	
 	if err != nil {
 		return fmt.Errorf("failed to receive messages: %w", err)
 	}
-	
+
 	if len(result.Messages) == 0 {
 		return nil
 	}
-	
+
 	log.Printf("Received %d messages\n", len(result.Messages))
-	
+
 	// Process each message
 	var wg sync.WaitGroup
 	for _, message := range result.Messages {
@@ -106,7 +105,7 @@ func (c *SQSConsumer) processBatch(ctx context.Context) error {
 			c.processMessage(ctx, msg)
 		}(message)
 	}
-	
+
 	wg.Wait()
 	return nil
 }
@@ -114,7 +113,7 @@ func (c *SQSConsumer) processBatch(ctx context.Context) error {
 // processMessage processes a single SQS message
 func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message) {
 	log.Printf("Processing message: %s\n", *message.MessageId)
-	
+
 	// Parse the message body
 	var workflowMsg WorkflowMessage
 	if err := json.Unmarshal([]byte(*message.Body), &workflowMsg); err != nil {
@@ -123,22 +122,22 @@ func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message)
 		c.deleteMessage(ctx, message)
 		return
 	}
-	
+
 	// Create a context for visibility timeout extension
 	processCtx, cancelProcess := context.WithCancel(ctx)
 	defer cancelProcess()
-	
+
 	// Start visibility timeout extension in a separate goroutine
 	extendDone := make(chan struct{})
 	go c.extendVisibilityTimeout(processCtx, message, extendDone)
-	
+
 	// Create and execute the workflow
-	err := c.executeWorkflow(processCtx, workflowMsg.WorkflowFile)
-	
+	err := c.executeWorkflow(processCtx, workflowMsg.WorkflowFile, workflowMsg)
+
 	// Stop visibility timeout extension
 	cancelProcess()
 	<-extendDone
-	
+
 	// Handle the result
 	if err != nil {
 		log.Printf("Workflow execution failed for message %s: %v\n", *message.MessageId, err)
@@ -151,26 +150,28 @@ func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message)
 }
 
 // executeWorkflow creates and executes a workflow from the specified file
-func (c *SQSConsumer) executeWorkflow(ctx context.Context, workflowFile string) error {
-	w, err := workflow.NewWorkflow(workflowFile, ctx)
+func (c *SQSConsumer) executeWorkflow(ctx context.Context, workflowFile string, workflowMsg WorkflowMessage) error {
+	w, err := workflow.NewWorkflow(workflowFile)
 	if err != nil {
 		return fmt.Errorf("failed to create workflow: %w", err)
 	}
-	
-	if err := w.Execute(); err != nil {
+
+	w.SetJob(workflowMsg)
+
+	if err := w.Execute(ctx); err != nil {
 		return fmt.Errorf("workflow execution failed: %w", err)
 	}
-	
+
 	return nil
 }
 
 // extendVisibilityTimeout periodically extends the visibility timeout of a message
 func (c *SQSConsumer) extendVisibilityTimeout(ctx context.Context, message types.Message, done chan struct{}) {
 	defer close(done)
-	
+
 	ticker := time.NewTicker(c.visibilityExtendInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -196,7 +197,7 @@ func (c *SQSConsumer) deleteMessage(ctx context.Context, message types.Message) 
 		QueueUrl:      aws.String(c.queueURL),
 		ReceiptHandle: message.ReceiptHandle,
 	})
-	
+
 	if err != nil {
 		log.Printf("Failed to delete message %s: %v\n", *message.MessageId, err)
 	} else {

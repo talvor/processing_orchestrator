@@ -186,7 +186,7 @@ steps:
 	}
 
 	consumer := NewSQSConsumer(mockClient, "test-queue-url")
-	
+
 	err := consumer.processBatch(context.Background())
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
@@ -238,13 +238,14 @@ func TestReceiveMessageParameters(t *testing.T) {
 // TestExecuteWorkflowError tests that executeWorkflow properly returns errors
 func TestExecuteWorkflowError(t *testing.T) {
 	consumer := &SQSConsumer{}
-	
+	workflowMessage := WorkflowMessage{}
+
 	// Test with non-existent file
-	err := consumer.executeWorkflow(context.Background(), "/non/existent/file.yaml")
+	err := consumer.executeWorkflow(context.Background(), "/non/existent/file.yaml", workflowMessage)
 	if err == nil {
 		t.Error("Expected error for non-existent workflow file")
 	}
-	
+
 	// Error message should contain details
 	if err != nil {
 		expectedSubstring := "failed to create workflow"

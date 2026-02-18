@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -26,7 +27,7 @@ to quickly create a Cobra application.`,
 			os.Exit(1)
 		}
 
-		w, err := workflow.NewWorkflow(args[0], nil)
+		w, err := workflow.NewWorkflow(args[0])
 		if err != nil {
 			fmt.Printf("Failed to create workflow: %v\n", err)
 			os.Exit(1)
@@ -40,7 +41,7 @@ to quickly create a Cobra application.`,
 			w.Orchestrator.SetLogger(orchestrator.NewStreamLogger())
 		}
 
-		err = w.Orchestrator.Execute()
+		err = w.Orchestrator.Execute(context.Background())
 		if err != nil {
 			fmt.Printf("Workflow execution failed: %v\n", err)
 			os.Exit(1)

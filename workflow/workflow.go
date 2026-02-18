@@ -14,12 +14,12 @@ type Workflow struct {
 	Job          any
 }
 
-func NewWorkflow(filename string, parentCtx context.Context) (*Workflow, error) {
+func NewWorkflow(filename string) (*Workflow, error) {
 	dag, err := dag.LoadDAGFromYAML(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	orchestrator := orchestrator.NewOrchestrator(dag, parentCtx)
+	orchestrator := orchestrator.NewOrchestrator(dag)
 
 	return &Workflow{
 		Orchestrator: orchestrator,
@@ -31,6 +31,6 @@ func (w *Workflow) SetJob(job any) {
 	w.Job = job
 }
 
-func (w *Workflow) Execute() error {
-	return w.Orchestrator.Execute()
+func (w *Workflow) Execute(ctx context.Context) error {
+	return w.Orchestrator.Execute(ctx)
 }
