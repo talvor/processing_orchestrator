@@ -10,6 +10,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
+// MockMessageProcessor is a mock implementation of MessageProcessor for testing
+type MockMessageProcessor[M any] struct {
+	DecodeMessageFunc  func(body string) (M, error)
+	ProcessMessageFunc func(ctx context.Context, msg M) error
+}
+
+func (m *MockMessageProcessor[M]) DecodeMessage(body string) (M, error) {
+	if m.DecodeMessageFunc != nil {
+		return m.DecodeMessageFunc(body)
+	}
+	var zero M
+	return zero, nil
+}
+
+func (m *MockMessageProcessor[M]) ProcessMessage(ctx context.Context, msg M) error {
+	if m.ProcessMessageFunc != nil {
+		return m.ProcessMessageFunc(ctx, msg)
+	}
+	return nil
+}
+
 // MockSQSClient is a mock implementation of SQS client for testing
 type MockSQSClient struct {
 	ReceiveMessageFunc           func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error)
@@ -40,9 +61,10 @@ func (m *MockSQSClient) ChangeMessageVisibility(ctx context.Context, params *sqs
 
 func TestNewSQSConsumer(t *testing.T) {
 	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{}
 	queueURL := "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue"
 
-	consumer := NewSQSConsumer(mockClient, queueURL)
+	consumer := NewSQSConsumer(mockClient, queueURL, mockProcessor)
 
 	if consumer == nil {
 		t.Fatal("Expected consumer to be created, got nil")
@@ -63,7 +85,8 @@ func TestNewSQSConsumer(t *testing.T) {
 
 func TestSetMaxMessages(t *testing.T) {
 	mockClient := &MockSQSClient{}
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	mockProcessor := &MockMessageProcessor[string]{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
 
 	consumer.SetMaxMessages(5)
 
@@ -74,7 +97,8 @@ func TestSetMaxMessages(t *testing.T) {
 
 func TestSetVisibilityTimeout(t *testing.T) {
 	mockClient := &MockSQSClient{}
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	mockProcessor := &MockMessageProcessor[string]{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
 
 	consumer.SetVisibilityTimeout(60)
 
@@ -91,8 +115,9 @@ func TestProcessBatchNoMessages(t *testing.T) {
 			}, nil
 		},
 	}
+	mockProcessor := &MockMessageProcessor[string]{}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
 	ctx := context.Background()
 
 	err := consumer.processBatch(ctx)
@@ -130,8 +155,9 @@ func TestDeleteMessage(t *testing.T) {
 			return &sqs.DeleteMessageOutput{}, nil
 		},
 	}
+	mockProcessor := &MockMessageProcessor[string]{}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
 	ctx := context.Background()
 
 	messageId := "test-message-id"
@@ -156,8 +182,9 @@ func TestExtendVisibilityTimeout(t *testing.T) {
 			return &sqs.ChangeMessageVisibilityOutput{}, nil
 		},
 	}
+	mockProcessor := &MockMessageProcessor[string]{}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
 	consumer.visibilityExtendInterval = 50 * time.Millisecond // Short interval for testing
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -190,8 +217,9 @@ func TestStartWithContextCancellation(t *testing.T) {
 			return &sqs.ReceiveMessageOutput{Messages: []types.Message{}}, nil
 		},
 	}
+	mockProcessor := &MockMessageProcessor[string]{}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

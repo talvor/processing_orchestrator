@@ -1,9 +1,9 @@
-// Package consumer provides SQS consumer functionality for processing workflow messages
+// Package consumer provides a generic SQS consumer for polling, fetching and managing SQS messages.
+// Decoding and processing of messages is delegated via the MessageProcessor interface.
 package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -12,9 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-
-	"processing_pipeline/workflow"
 )
+
+// MessageProcessor defines the interface for decoding and processing SQS messages.
+type MessageProcessor[M any] interface {
+	DecodeMessage(body string) (M, error)
+	ProcessMessage(ctx context.Context, msg M) error
+}
 
 // SQSClientAPI defines the interface for SQS operations
 type SQSClientAPI interface {
@@ -23,45 +27,43 @@ type SQSClientAPI interface {
 	ChangeMessageVisibility(ctx context.Context, params *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error)
 }
 
-// WorkflowMessage represents the expected message structure from SQS
-type WorkflowMessage struct {
-	WorkflowFile string `json:"workflow_file"`
-}
-
-// SQSConsumer handles receiving messages from SQS and processing workflows
-type SQSConsumer struct {
+// SQSConsumer handles polling, fetching and managing messages from an SQS queue.
+// Decoding and processing of messages is delegated to the provided MessageProcessor.
+type SQSConsumer[M any] struct {
 	sqsClient                SQSClientAPI
 	queueURL                 string
 	maxMessages              int32
 	waitTimeSeconds          int32
 	visibilityTimeout        int32
 	visibilityExtendInterval time.Duration
+	processor                MessageProcessor[M]
 }
 
 // NewSQSConsumer creates a new SQS consumer instance
-func NewSQSConsumer(sqsClient SQSClientAPI, queueURL string) *SQSConsumer {
-	return &SQSConsumer{
+func NewSQSConsumer[M any](sqsClient SQSClientAPI, queueURL string, processor MessageProcessor[M]) *SQSConsumer[M] {
+	return &SQSConsumer[M]{
 		sqsClient:                sqsClient,
 		queueURL:                 queueURL,
 		maxMessages:              10,               // Default batch size
 		waitTimeSeconds:          20,               // Long polling
 		visibilityTimeout:        30,               // Initial visibility timeout in seconds
 		visibilityExtendInterval: 10 * time.Second, // Extend every 10 seconds
+		processor:                processor,
 	}
 }
 
 // SetMaxMessages sets the maximum number of messages to receive in a batch
-func (c *SQSConsumer) SetMaxMessages(max int32) {
+func (c *SQSConsumer[M]) SetMaxMessages(max int32) {
 	c.maxMessages = max
 }
 
 // SetVisibilityTimeout sets the initial visibility timeout for messages
-func (c *SQSConsumer) SetVisibilityTimeout(timeout int32) {
+func (c *SQSConsumer[M]) SetVisibilityTimeout(timeout int32) {
 	c.visibilityTimeout = timeout
 }
 
 // Start begins consuming messages from the SQS queue
-func (c *SQSConsumer) Start(ctx context.Context) error {
+func (c *SQSConsumer[M]) Start(ctx context.Context) error {
 	log.Println("Starting SQS consumer...")
 
 	for {
@@ -78,7 +80,7 @@ func (c *SQSConsumer) Start(ctx context.Context) error {
 }
 
 // processBatch receives and processes a batch of messages
-func (c *SQSConsumer) processBatch(ctx context.Context) error {
+func (c *SQSConsumer[M]) processBatch(ctx context.Context) error {
 	// Receive messages from the queue
 	result, err := c.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(c.queueURL),
@@ -96,7 +98,7 @@ func (c *SQSConsumer) processBatch(ctx context.Context) error {
 
 	log.Printf("Received %d messages\n", len(result.Messages))
 
-	// Process each message
+	// Process each message concurrently
 	var wg sync.WaitGroup
 	for _, message := range result.Messages {
 		wg.Add(1)
@@ -110,14 +112,14 @@ func (c *SQSConsumer) processBatch(ctx context.Context) error {
 	return nil
 }
 
-// processMessage processes a single SQS message
-func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message) {
+// processMessage decodes and processes a single SQS message
+func (c *SQSConsumer[M]) processMessage(ctx context.Context, message types.Message) {
 	log.Printf("Processing message: %s\n", *message.MessageId)
 
-	// Parse the message body
-	var workflowMsg WorkflowMessage
-	if err := json.Unmarshal([]byte(*message.Body), &workflowMsg); err != nil {
-		log.Printf("Failed to parse message body: %v\n", err)
+	// Decode the message body via the processor
+	msg, err := c.processor.DecodeMessage(*message.Body)
+	if err != nil {
+		log.Printf("Failed to decode message body: %v\n", err)
 		// Delete malformed messages to prevent repeated processing
 		c.deleteMessage(ctx, message)
 		return
@@ -131,8 +133,8 @@ func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message)
 	extendDone := make(chan struct{})
 	go c.extendVisibilityTimeout(processCtx, message, extendDone)
 
-	// Create and execute the workflow
-	err := c.executeWorkflow(processCtx, workflowMsg.WorkflowFile, workflowMsg)
+	// Delegate processing to the processor
+	err = c.processor.ProcessMessage(processCtx, msg)
 
 	// Stop visibility timeout extension
 	cancelProcess()
@@ -140,33 +142,16 @@ func (c *SQSConsumer) processMessage(ctx context.Context, message types.Message)
 
 	// Handle the result
 	if err != nil {
-		log.Printf("Workflow execution failed for message %s: %v\n", *message.MessageId, err)
+		log.Printf("Processing failed for message %s: %v\n", *message.MessageId, err)
 		// Message will automatically return to queue after visibility timeout
-		// No action needed for failure case
 	} else {
-		log.Printf("Workflow execution succeeded for message %s\n", *message.MessageId)
+		log.Printf("Processing succeeded for message %s\n", *message.MessageId)
 		c.deleteMessage(ctx, message)
 	}
 }
 
-// executeWorkflow creates and executes a workflow from the specified file
-func (c *SQSConsumer) executeWorkflow(ctx context.Context, workflowFile string, workflowMsg WorkflowMessage) error {
-	w, err := workflow.NewWorkflow(workflowFile)
-	if err != nil {
-		return fmt.Errorf("failed to create workflow: %w", err)
-	}
-
-	w.SetJob(workflowMsg)
-
-	if err := w.Execute(ctx); err != nil {
-		return fmt.Errorf("workflow execution failed: %w", err)
-	}
-
-	return nil
-}
-
 // extendVisibilityTimeout periodically extends the visibility timeout of a message
-func (c *SQSConsumer) extendVisibilityTimeout(ctx context.Context, message types.Message, done chan struct{}) {
+func (c *SQSConsumer[M]) extendVisibilityTimeout(ctx context.Context, message types.Message, done chan struct{}) {
 	defer close(done)
 
 	ticker := time.NewTicker(c.visibilityExtendInterval)
@@ -192,7 +177,7 @@ func (c *SQSConsumer) extendVisibilityTimeout(ctx context.Context, message types
 }
 
 // deleteMessage deletes a message from the queue after successful processing
-func (c *SQSConsumer) deleteMessage(ctx context.Context, message types.Message) {
+func (c *SQSConsumer[M]) deleteMessage(ctx context.Context, message types.Message) {
 	_, err := c.sqsClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(c.queueURL),
 		ReceiptHandle: message.ReceiptHandle,
