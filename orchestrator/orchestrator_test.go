@@ -773,3 +773,130 @@ exit 1`,
 		t.Errorf("Expected script with retries to fail, but it succeeded")
 	}
 }
+
+// TestExecuteWithParams tests that struct fields are available as named params in steps
+func TestExecuteWithParams(t *testing.T) {
+	type JobParams struct {
+		InputFile  string
+		OutputFile string
+	}
+
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name:    "A",
+				Command: "test '$InputFile' = 'input.txt' && test '$OutputFile' = 'output.txt'",
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.ExecuteWithParams(context.Background(), JobParams{
+		InputFile:  "input.txt",
+		OutputFile: "output.txt",
+	})
+	if err != nil {
+		t.Errorf("Expected workflow to succeed with struct params, but got error: %v", err)
+	}
+}
+
+// TestExecuteWithParamsPointer tests that a pointer to a struct also works
+func TestExecuteWithParamsPointer(t *testing.T) {
+	type JobParams struct {
+		Name string
+	}
+
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name:    "A",
+				Command: "test '$Name' = 'world'",
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.ExecuteWithParams(context.Background(), &JobParams{Name: "world"})
+	if err != nil {
+		t.Errorf("Expected workflow to succeed with pointer to struct params, but got error: %v", err)
+	}
+}
+
+// TestExecuteWithParamsNonStruct tests that passing a non-struct returns an error
+func TestExecuteWithParamsNonStruct(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {Name: "A", Command: "echo A"},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.ExecuteWithParams(context.Background(), "not a struct")
+	if err == nil {
+		t.Errorf("Expected error when passing non-struct, but got nil")
+	}
+}
+
+// TestExecuteWithParamsNil tests that passing nil returns an error
+func TestExecuteWithParamsNil(t *testing.T) {
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {Name: "A", Command: "echo A"},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.ExecuteWithParams(context.Background(), nil)
+	if err == nil {
+		t.Errorf("Expected error when passing nil, but got nil")
+	}
+}
+
+// TestExecuteWithParamsUnexportedFieldsIgnored tests that unexported fields are not included in params
+func TestExecuteWithParamsUnexportedFieldsIgnored(t *testing.T) {
+	type JobParams struct {
+		PublicField  string
+		privateField string //nolint:unused
+	}
+
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name:    "A",
+				Command: "test '$PublicField' = 'visible'",
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.ExecuteWithParams(context.Background(), JobParams{
+		PublicField:  "visible",
+		privateField: "hidden",
+	})
+	if err != nil {
+		t.Errorf("Expected workflow to succeed with only exported fields used, but got error: %v", err)
+	}
+}
+
+// TestExecuteWithParamsInArgs tests that struct params can be used in command args
+func TestExecuteWithParamsInArgs(t *testing.T) {
+	type JobParams struct {
+		ExpectedValue string
+	}
+
+	mockDAG := &dag.DAG{
+		Nodes: map[string]*dag.Node{
+			"A": {
+				Name:    "A",
+				Command: "test",
+				Args:    []string{"$ExpectedValue", "=", "hello"},
+			},
+		},
+	}
+
+	orchestrator := NewOrchestrator(mockDAG)
+	err := orchestrator.ExecuteWithParams(context.Background(), JobParams{ExpectedValue: "hello"})
+	if err != nil {
+		t.Errorf("Expected workflow to succeed with struct params in args, but got error: %v", err)
+	}
+}
