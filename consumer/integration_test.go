@@ -42,7 +42,7 @@ steps:
 		},
 	}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", NewWorkflowMessageProcessor())
 
 	// Create a valid message
 	msg := WorkflowMessage{
@@ -81,7 +81,7 @@ func TestProcessMessageWithInvalidWorkflow(t *testing.T) {
 		},
 	}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", NewWorkflowMessageProcessor())
 
 	// Create a message with non-existent workflow file
 	msg := WorkflowMessage{
@@ -117,7 +117,7 @@ func TestProcessMessageWithMalformedJSON(t *testing.T) {
 		},
 	}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", NewWorkflowMessageProcessor())
 
 	// Create a message with malformed JSON
 	messageId := "test-message-id"
@@ -185,7 +185,7 @@ steps:
 		},
 	}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", NewWorkflowMessageProcessor())
 
 	err := consumer.processBatch(context.Background())
 	if err != nil {
@@ -208,7 +208,7 @@ func TestReceiveMessageParameters(t *testing.T) {
 		},
 	}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", &MockMessageProcessor[string]{})
 	consumer.SetMaxMessages(5)
 	consumer.SetVisibilityTimeout(60)
 
@@ -235,13 +235,13 @@ func TestReceiveMessageParameters(t *testing.T) {
 	}
 }
 
-// TestExecuteWorkflowError tests that executeWorkflow properly returns errors
-func TestExecuteWorkflowError(t *testing.T) {
-	consumer := &SQSConsumer{}
-	workflowMessage := WorkflowMessage{}
+// TestWorkflowMessageProcessorError tests that WorkflowMessageProcessor.ProcessMessage properly returns errors
+func TestWorkflowMessageProcessorError(t *testing.T) {
+	processor := NewWorkflowMessageProcessor()
+	workflowMessage := WorkflowMessage{WorkflowFile: "/non/existent/file.yaml"}
 
 	// Test with non-existent file
-	err := consumer.executeWorkflow(context.Background(), "/non/existent/file.yaml", workflowMessage)
+	err := processor.ProcessMessage(context.Background(), workflowMessage)
 	if err == nil {
 		t.Error("Expected error for non-existent workflow file")
 	}
@@ -255,7 +255,43 @@ func TestExecuteWorkflowError(t *testing.T) {
 	}
 }
 
-// BenchmarkProcessMessage benchmarks message processing
+// TestWorkflowMessageProcessorDecodeMessage tests WorkflowMessageProcessor.DecodeMessage
+func TestWorkflowMessageProcessorDecodeMessage(t *testing.T) {
+	processor := NewWorkflowMessageProcessor()
+
+	t.Run("valid JSON", func(t *testing.T) {
+		body := `{"workflow_file": "/path/to/workflow.yaml"}`
+		msg, err := processor.DecodeMessage(body)
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+		if msg.WorkflowFile != "/path/to/workflow.yaml" {
+			t.Errorf("Expected WorkflowFile to be '/path/to/workflow.yaml', got %s", msg.WorkflowFile)
+		}
+	})
+
+	t.Run("malformed JSON", func(t *testing.T) {
+		_, err := processor.DecodeMessage("this is not valid json")
+		if err == nil {
+			t.Error("Expected error for malformed JSON")
+		}
+		if !strings.Contains(err.Error(), "failed to parse message body") {
+			t.Errorf("Expected error to contain 'failed to parse message body', got: %s", err.Error())
+		}
+	})
+
+	t.Run("missing required fields", func(t *testing.T) {
+		msg, err := processor.DecodeMessage(`{}`)
+		if err != nil {
+			t.Fatalf("Expected no error for missing fields, got %v", err)
+		}
+		if msg.WorkflowFile != "" {
+			t.Errorf("Expected WorkflowFile to be empty, got %s", msg.WorkflowFile)
+		}
+	})
+}
+
+
 func BenchmarkProcessMessage(b *testing.B) {
 	// Create a temporary workflow file
 	workflowContent := `name: test workflow
@@ -277,7 +313,7 @@ steps:
 		},
 	}
 
-	consumer := NewSQSConsumer(mockClient, "test-queue-url")
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", NewWorkflowMessageProcessor())
 
 	msg := WorkflowMessage{WorkflowFile: tmpFile.Name()}
 	msgBody, _ := json.Marshal(msg)

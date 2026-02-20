@@ -48,7 +48,8 @@ func main() {
 	sqsClient := sqs.NewFromConfig(awsConfig)
 
 	// Create consumer
-	sqsConsumer := consumer.NewSQSConsumer(sqsClient, queueURL)
+	processor := consumer.NewWorkflowMessageProcessor()
+	sqsConsumer := consumer.NewSQSConsumer(sqsClient, queueURL, processor)
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
