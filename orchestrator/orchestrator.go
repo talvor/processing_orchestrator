@@ -5,15 +5,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"processing_pipeline/dag"
+	"processing_pipeline/utilities"
 )
+
+type Params map[string]any
 
 // WhenConditionNotMetError is a special error type that indicates a when condition was not met
 type WhenConditionNotMetError struct {
@@ -126,7 +129,7 @@ func (wo *Orchestrator) Execute(ctx context.Context) error {
 	return wo.execute(ctx, nil)
 }
 
-func (wo *Orchestrator) execute(ctx context.Context, extraParams map[string]string) error {
+func (wo *Orchestrator) execute(ctx context.Context, extraParams Params) error {
 	start := time.Now()
 	dagSnapshot := wo.createDAGSnapshot()
 
@@ -536,7 +539,7 @@ func (wo *Orchestrator) execute(ctx context.Context, extraParams map[string]stri
 	return nil
 }
 
-func (wo *Orchestrator) replaceParams(input string, params map[string]string) string {
+func (wo *Orchestrator) replaceParams(input string, params Params) string {
 	// Merge params with output variables (params take precedence)
 	result := input
 
@@ -549,13 +552,13 @@ func (wo *Orchestrator) replaceParams(input string, params map[string]string) st
 
 	// Then replace params (can override output variables if same name)
 	for param, value := range params {
-		result = strings.ReplaceAll(result, "$"+param, value)
+		result = strings.ReplaceAll(result, "$"+param, value.(string))
 	}
 	return result
 }
 
 // checkWhenCondition checks if the node's when condition is met
-func (wo *Orchestrator) checkWhenCondition(ctx context.Context, node *dag.Node, params map[string]string) error {
+func (wo *Orchestrator) checkWhenCondition(ctx context.Context, node *dag.Node, params Params) error {
 	if node.When == nil {
 		return nil
 	}
@@ -581,7 +584,7 @@ func (wo *Orchestrator) checkWhenCondition(ctx context.Context, node *dag.Node, 
 }
 
 // checkPreconditions checks all preconditions for the node
-func (wo *Orchestrator) checkPreconditions(ctx context.Context, node *dag.Node, params map[string]string) error {
+func (wo *Orchestrator) checkPreconditions(ctx context.Context, node *dag.Node, params Params) error {
 	for _, precondition := range node.Preconditions {
 		predicate := wo.replaceParams(precondition.Predicate, params)
 		expected := wo.replaceParams(precondition.Expected, params)
@@ -603,7 +606,7 @@ func (wo *Orchestrator) checkPreconditions(ctx context.Context, node *dag.Node, 
 }
 
 // prepareCommand creates the exec.Cmd for the node (either script or command)
-func (wo *Orchestrator) prepareCommand(ctx context.Context, node *dag.Node, params map[string]string) (*exec.Cmd, func(), error) {
+func (wo *Orchestrator) prepareCommand(ctx context.Context, node *dag.Node, params Params) (*exec.Cmd, func(), error) {
 	// Determine if this is a script or command execution
 	if node.Script != "" {
 		return wo.prepareScriptCommand(ctx, node, params)
@@ -612,7 +615,7 @@ func (wo *Orchestrator) prepareCommand(ctx context.Context, node *dag.Node, para
 }
 
 // prepareScriptCommand creates a command for script execution
-func (wo *Orchestrator) prepareScriptCommand(ctx context.Context, node *dag.Node, params map[string]string) (*exec.Cmd, func(), error) {
+func (wo *Orchestrator) prepareScriptCommand(ctx context.Context, node *dag.Node, params Params) (*exec.Cmd, func(), error) {
 	// Create a temporary file for the script
 	tmpFile, err := os.CreateTemp("", "workflow-script-*.sh")
 	if err != nil {
@@ -664,7 +667,7 @@ func (wo *Orchestrator) prepareScriptCommand(ctx context.Context, node *dag.Node
 }
 
 // prepareRegularCommand creates a command for regular command execution
-func (wo *Orchestrator) prepareRegularCommand(ctx context.Context, node *dag.Node, params map[string]string) (*exec.Cmd, func(), error) {
+func (wo *Orchestrator) prepareRegularCommand(ctx context.Context, node *dag.Node, params Params) (*exec.Cmd, func(), error) {
 	replacedCommand := wo.replaceParams(node.Command, params)
 
 	// Replace parameters in args if args are provided
@@ -739,7 +742,7 @@ func (wo *Orchestrator) storeOutputVariables(node *dag.Node, stdoutBuf, stderrBu
 }
 
 // executeWithRetry executes the node's command with retry logic
-func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, params map[string]string) error {
+func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, params Params) error {
 	retries := 0
 	if node.RetryPolicy != nil {
 		retries = node.RetryPolicy.Limit
@@ -792,22 +795,20 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 	return nil
 }
 
-func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName string, extraParams map[string]string) error {
+func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName string, extraParams Params) error {
 	node, exists := wo.Dag.Nodes[nodeName]
 	if !exists {
 		return fmt.Errorf("node '%s' not found in DAG", nodeName)
 	}
 
 	// Build params map
-	params := map[string]string{}
+	params := map[string]any{}
 	for i, v := range wo.Dag.Params {
 		params[fmt.Sprintf("%d", i+1)] = v
 	}
 
 	// Merge extra named params provided via ExecuteWithParams
-	for k, v := range extraParams {
-		params[k] = v
-	}
+	maps.Copy(params, extraParams)
 
 	// Check when condition
 	if err := wo.checkWhenCondition(ctx, node, params); err != nil {
@@ -832,38 +833,9 @@ func (wo *Orchestrator) executeNode(nodeName string) error {
 // in step commands, args, scripts, and conditions as $FieldName.
 // The value passed must be a struct or a pointer to a struct.
 func (wo *Orchestrator) ExecuteWithParams(ctx context.Context, params any) error {
-	structParams, err := structToParams(params)
+	structParams, err := utilities.FlattenStruct(params)
 	if err != nil {
 		return err
 	}
 	return wo.execute(ctx, structParams)
-}
-
-// structToParams converts the exported fields of a struct to a map[string]string.
-// The field name is used as the key and the field value is converted to its string representation.
-func structToParams(v any) (map[string]string, error) {
-	if v == nil {
-		return nil, fmt.Errorf("params must be a non-nil struct")
-	}
-
-	val := reflect.ValueOf(v)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
-	if val.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("params must be a struct, got %s", val.Kind())
-	}
-
-	params := make(map[string]string)
-	typ := val.Type()
-	for i := 0; i < val.NumField(); i++ {
-		field := typ.Field(i)
-		if !field.IsExported() {
-			continue
-		}
-		params[field.Name] = fmt.Sprintf("%v", val.Field(i).Interface())
-	}
-
-	return params, nil
 }
