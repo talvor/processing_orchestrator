@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -122,6 +123,10 @@ func (wo *Orchestrator) logNodeEvent(nodeName string, event ExecutionEvent, stat
 }
 
 func (wo *Orchestrator) Execute(ctx context.Context) error {
+	return wo.execute(ctx, nil)
+}
+
+func (wo *Orchestrator) execute(ctx context.Context, extraParams map[string]string) error {
 	start := time.Now()
 	dagSnapshot := wo.createDAGSnapshot()
 
@@ -380,7 +385,7 @@ func (wo *Orchestrator) Execute(ctx context.Context) error {
 					node := wo.Dag.Nodes[name]
 
 					// Execute the node
-					if err := wo.executeNodeWithContext(ctx, name); err != nil {
+					if err := wo.executeNodeWithContext(ctx, name, extraParams); err != nil {
 						state := nodeStates[name]
 						state.mu.Lock()
 						state.endTime = time.Now()
@@ -787,7 +792,7 @@ func (wo *Orchestrator) executeWithRetry(ctx context.Context, node *dag.Node, pa
 	return nil
 }
 
-func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName string) error {
+func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName string, extraParams map[string]string) error {
 	node, exists := wo.Dag.Nodes[nodeName]
 	if !exists {
 		return fmt.Errorf("node '%s' not found in DAG", nodeName)
@@ -797,6 +802,11 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 	params := map[string]string{}
 	for i, v := range wo.Dag.Params {
 		params[fmt.Sprintf("%d", i+1)] = v
+	}
+
+	// Merge extra named params provided via ExecuteWithParams
+	for k, v := range extraParams {
+		params[k] = v
 	}
 
 	// Check when condition
@@ -814,5 +824,46 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 }
 
 func (wo *Orchestrator) executeNode(nodeName string) error {
-	return wo.executeNodeWithContext(context.Background(), nodeName)
+	return wo.executeNodeWithContext(context.Background(), nodeName, nil)
+}
+
+// ExecuteWithParams executes the workflow using named params derived from the exported fields
+// of the provided struct. Each exported field name becomes a param name that can be referenced
+// in step commands, args, scripts, and conditions as $FieldName.
+// The value passed must be a struct or a pointer to a struct.
+func (wo *Orchestrator) ExecuteWithParams(ctx context.Context, params any) error {
+	structParams, err := structToParams(params)
+	if err != nil {
+		return err
+	}
+	return wo.execute(ctx, structParams)
+}
+
+// structToParams converts the exported fields of a struct to a map[string]string.
+// The field name is used as the key and the field value is converted to its string representation.
+func structToParams(v any) (map[string]string, error) {
+	if v == nil {
+		return nil, fmt.Errorf("params must be a non-nil struct")
+	}
+
+	val := reflect.ValueOf(v)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("params must be a struct, got %s", val.Kind())
+	}
+
+	params := make(map[string]string)
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		params[field.Name] = fmt.Sprintf("%v", val.Field(i).Interface())
+	}
+
+	return params, nil
 }
