@@ -3,6 +3,7 @@
 CLI_BINARY_NAME=processing_pipeline
 SQS_CONSUMER_BINARY_NAME=sqs_consumer
 BIN_DIR=./bin
+CURRENT_DIR=$(shell pwd)
 
 # Localstack configuration
 LOCALSTACK_CONTAINER_NAME=processing-orchestrator-localstack
@@ -47,12 +48,19 @@ localstack-start:
 
 .PHONY: localstack-setup-queue
 localstack-setup-queue:
+	@echo "Creating SQS dead letter queue: $(SQS_QUEUE_NAME)_dlq"
+	@AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+		aws --endpoint-url=$(LOCALSTACK_ENDPOINT) \
+		--region $(AWS_REGION) \
+		sqs create-queue \
+		--queue-name "$(SQS_QUEUE_NAME)_dlq"
 	@echo "Creating SQS queue: $(SQS_QUEUE_NAME)"
 	@AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
 		aws --endpoint-url=$(LOCALSTACK_ENDPOINT) \
 		--region $(AWS_REGION) \
 		sqs create-queue \
 		--queue-name $(SQS_QUEUE_NAME) \
+		--attributes '{"RedrivePolicy": "{\"deadLetterTargetArn\":\"arn:aws:sqs:us-east-1:000000000000:$(SQS_QUEUE_NAME)_dlq\",\"maxReceiveCount\":\"5\"}"}'
 		--no-cli-pager
 	@echo "Getting queue URL..."
 	@AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
@@ -91,6 +99,26 @@ test:
 	@echo "Running tests..."
 	@go test ./...
 
+.PHONY: start-sqs-consumer
+start-sqs-consumer:
+	@echo "Starting SQS consumer..."
+	@export SQS_QUEUE_URL=$(LOCALSTACK_ENDPOINT)/000000000000/$(SQS_QUEUE_NAME) && \
+	export AWS_REGION=$(AWS_REGION) && \
+	export AWS_ACCESS_KEY_ID=test && \
+	export AWS_SECRET_ACCESS_KEY=test && \
+	export AWS_ENDPOINT_URL=$(LOCALSTACK_ENDPOINT) && \
+	./bin/sqs_consumer
+
+.PHONY: send-test-message
+send-test-message:
+	@echo "Current directory: $(CURRENT_DIR)"
+	@echo "Sending test message to SQS queue..."
+	@export AWS_ACCESS_KEY_ID=test && \
+	export AWS_SECRET_ACCESS_KEY=test && \
+	aws --endpoint-url=http://localhost:4566 --region us-east-1 sqs send-message \
+	  --queue-url http://localhost:4566/000000000000/test-workflow-queue \
+		--message-body '{"workflow_file":"$(CURRENT_DIR)/examples/complex.yaml"}'
+
 .PHONY: help
 help:
 	@echo "Valid targets are:"
@@ -103,5 +131,6 @@ help:
 	@echo "  localstack-start   : Start Localstack container"
 	@echo "  localstack-setup-queue : Create SQS queue in Localstack"
 	@echo "  localstack-stop    : Stop and remove Localstack container"
+	@echo "  start-sqs-consumer : Start the SQS consumer with Localstack configuration"
 	@echo "  help               : Display this help message"
 

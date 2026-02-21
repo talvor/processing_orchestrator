@@ -33,9 +33,9 @@ func (m *MockMessageProcessor[M]) ProcessMessage(ctx context.Context, msg M) err
 
 // MockSQSClient is a mock implementation of SQS client for testing
 type MockSQSClient struct {
-	ReceiveMessageFunc           func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error)
-	DeleteMessageFunc            func(ctx context.Context, params *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error)
-	ChangeMessageVisibilityFunc  func(ctx context.Context, params *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error)
+	ReceiveMessageFunc          func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error)
+	DeleteMessageFunc           func(ctx context.Context, params *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error)
+	ChangeMessageVisibilityFunc func(ctx context.Context, params *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error)
 }
 
 func (m *MockSQSClient) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
@@ -126,9 +126,13 @@ func TestProcessBatchNoMessages(t *testing.T) {
 	}
 }
 
+type MockMessage struct {
+	Greeting string `json:"greeting"`
+}
+
 func TestWorkflowMessageParsing(t *testing.T) {
-	msg := WorkflowMessage{
-		WorkflowFile: "/path/to/workflow.yaml",
+	msg := MockMessage{
+		Greeting: "Hello, World!",
 	}
 
 	data, err := json.Marshal(msg)
@@ -136,14 +140,14 @@ func TestWorkflowMessageParsing(t *testing.T) {
 		t.Fatalf("Failed to marshal message: %v", err)
 	}
 
-	var parsed WorkflowMessage
+	var parsed MockMessage
 	err = json.Unmarshal(data, &parsed)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal message: %v", err)
 	}
 
-	if parsed.WorkflowFile != msg.WorkflowFile {
-		t.Errorf("Expected WorkflowFile to be %s, got %s", msg.WorkflowFile, parsed.WorkflowFile)
+	if parsed.Greeting != msg.Greeting {
+		t.Errorf("Expected Greeting to be %s, got %s", msg.Greeting, parsed.Greeting)
 	}
 }
 

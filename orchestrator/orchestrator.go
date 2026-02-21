@@ -58,7 +58,7 @@ func NewOrchestratorWithWorkers(dag *dag.DAG, workerCount int) *Orchestrator {
 	return &Orchestrator{
 		Dag:         dag,
 		WorkerCount: workerCount,
-		logger:      NewNoOpLogger(),         // Default to noop logger
+		logger:      NewStreamLogger(),       // Default to noop logger
 		outputVars:  make(map[string]string), // Initialize output variables map
 	}
 }

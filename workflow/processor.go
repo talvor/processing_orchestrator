@@ -1,11 +1,9 @@
-package consumer
+package workflow
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"processing_pipeline/workflow"
 )
 
 // WorkflowMessage represents the expected message structure for workflow processing
@@ -33,7 +31,7 @@ func (p *WorkflowMessageProcessor) DecodeMessage(body string) (WorkflowMessage, 
 
 // ProcessMessage executes the workflow specified in the message
 func (p *WorkflowMessageProcessor) ProcessMessage(ctx context.Context, msg WorkflowMessage) error {
-	w, err := workflow.NewWorkflow(msg.WorkflowFile)
+	w, err := NewWorkflow(msg.WorkflowFile)
 	if err != nil {
 		return fmt.Errorf("failed to create workflow: %w", err)
 	}

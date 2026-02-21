@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
 	"processing_pipeline/consumer"
+	"processing_pipeline/workflow"
 )
 
 func main() {
@@ -48,7 +49,7 @@ func main() {
 	sqsClient := sqs.NewFromConfig(awsConfig)
 
 	// Create consumer
-	processor := consumer.NewWorkflowMessageProcessor()
+	processor := workflow.NewWorkflowMessageProcessor()
 	sqsConsumer := consumer.NewSQSConsumer(sqsClient, queueURL, processor)
 
 	// Set up signal handling for graceful shutdown
