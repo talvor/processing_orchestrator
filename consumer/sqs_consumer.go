@@ -4,6 +4,7 @@ package consumer
 
 import (
 	"context"
+	"expvar"
 	"fmt"
 	"log"
 	"sync"
@@ -12,6 +13,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+)
+
+// Metrics exported via expvar for monitoring the SQS consumer.
+var (
+	MetricsBatchesProcessed     = expvar.NewInt("sqs_consumer_batches_processed")
+	MetricsMessagesReceived     = expvar.NewInt("sqs_consumer_messages_received")
+	MetricsMessagesProcessed    = expvar.NewInt("sqs_consumer_messages_processed")
+	MetricsMessagesFailed       = expvar.NewInt("sqs_consumer_messages_failed")
+	MetricsMessagesDecodeErrors = expvar.NewInt("sqs_consumer_messages_decode_errors")
+	MetricsMessagesDeleted      = expvar.NewInt("sqs_consumer_messages_deleted")
+	MetricsVisibilityExtensions = expvar.NewInt("sqs_consumer_visibility_extensions")
 )
 
 // MessageProcessor defines the interface for decoding and processing SQS messages.
@@ -92,10 +104,13 @@ func (c *SQSConsumer[M]) processBatch(ctx context.Context) error {
 		return fmt.Errorf("failed to receive messages: %w", err)
 	}
 
+	MetricsBatchesProcessed.Add(1)
+
 	if len(result.Messages) == 0 {
 		return nil
 	}
 
+	MetricsMessagesReceived.Add(int64(len(result.Messages)))
 	log.Printf("Received %d messages\n", len(result.Messages))
 
 	// Process each message concurrently
@@ -120,6 +135,7 @@ func (c *SQSConsumer[M]) processMessage(ctx context.Context, message types.Messa
 	msg, err := c.processor.DecodeMessage(*message.Body)
 	if err != nil {
 		log.Printf("Failed to decode message body: %v\n", err)
+		MetricsMessagesDecodeErrors.Add(1)
 		// Delete malformed messages to prevent repeated processing
 		c.deleteMessage(ctx, message)
 		return
@@ -143,9 +159,11 @@ func (c *SQSConsumer[M]) processMessage(ctx context.Context, message types.Messa
 	// Handle the result
 	if err != nil {
 		log.Printf("Processing failed for message %s: %v\n", *message.MessageId, err)
+		MetricsMessagesFailed.Add(1)
 		// Message will automatically return to queue after visibility timeout
 	} else {
 		log.Printf("Processing succeeded for message %s\n", *message.MessageId)
+		MetricsMessagesProcessed.Add(1)
 		c.deleteMessage(ctx, message)
 	}
 }
@@ -171,6 +189,7 @@ func (c *SQSConsumer[M]) extendVisibilityTimeout(ctx context.Context, message ty
 				log.Printf("Failed to extend visibility timeout for message %s: %v\n", *message.MessageId, err)
 			} else {
 				log.Printf("Extended visibility timeout for message %s\n", *message.MessageId)
+				MetricsVisibilityExtensions.Add(1)
 			}
 		}
 	}
@@ -187,5 +206,6 @@ func (c *SQSConsumer[M]) deleteMessage(ctx context.Context, message types.Messag
 		log.Printf("Failed to delete message %s: %v\n", *message.MessageId, err)
 	} else {
 		log.Printf("Deleted message %s\n", *message.MessageId)
+		MetricsMessagesDeleted.Add(1)
 	}
 }
