@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,6 +107,92 @@ func TestSetVisibilityTimeout(t *testing.T) {
 
 	if consumer.visibilityTimeout != 60 {
 		t.Errorf("Expected visibilityTimeout to be 60, got %d", consumer.visibilityTimeout)
+	}
+}
+
+func TestSetConcurrency(t *testing.T) {
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+
+	consumer.SetConcurrency(5)
+
+	if consumer.concurrency != 5 {
+		t.Errorf("Expected concurrency to be 5, got %d", consumer.concurrency)
+	}
+	if cap(consumer.semaphore) != 5 {
+		t.Errorf("Expected semaphore capacity to be 5, got %d", cap(consumer.semaphore))
+	}
+}
+
+func TestDefaultConcurrency(t *testing.T) {
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+
+	if consumer.concurrency != 10 {
+		t.Errorf("Expected default concurrency to be 10, got %d", consumer.concurrency)
+	}
+	if cap(consumer.semaphore) != 10 {
+		t.Errorf("Expected default semaphore capacity to be 10, got %d", cap(consumer.semaphore))
+	}
+}
+
+func TestConcurrencyLimit(t *testing.T) {
+	const maxConcurrent = 2
+	const totalMessages = 5
+
+	// Track peak concurrent processing
+	var mu sync.Mutex
+	currentConcurrent := 0
+	peakConcurrent := 0
+
+	messageIDs := make([]string, totalMessages)
+	receiptHandles := make([]string, totalMessages)
+	bodies := make([]string, totalMessages)
+	messages := make([]types.Message, totalMessages)
+	for i := range totalMessages {
+		messageIDs[i] = fmt.Sprintf("msg-%d", i)
+		receiptHandles[i] = fmt.Sprintf("rh-%d", i)
+		bodies[i] = `"hello"`
+		messages[i] = types.Message{
+			MessageId:     &messageIDs[i],
+			ReceiptHandle: &receiptHandles[i],
+			Body:          &bodies[i],
+		}
+	}
+
+	mockClient := &MockSQSClient{
+		ReceiveMessageFunc: func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+			return &sqs.ReceiveMessageOutput{Messages: messages}, nil
+		},
+	}
+	mockProcessor := &MockMessageProcessor[string]{
+		DecodeMessageFunc: func(b string) (string, error) { return b, nil },
+		ProcessMessageFunc: func(ctx context.Context, msg string) error {
+			mu.Lock()
+			currentConcurrent++
+			if currentConcurrent > peakConcurrent {
+				peakConcurrent = currentConcurrent
+			}
+			mu.Unlock()
+
+			time.Sleep(20 * time.Millisecond)
+
+			mu.Lock()
+			currentConcurrent--
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+	consumer.SetConcurrency(maxConcurrent)
+
+	_ = consumer.processBatch(context.Background())
+
+	if peakConcurrent > maxConcurrent {
+		t.Errorf("Expected peak concurrency to be at most %d, got %d", maxConcurrent, peakConcurrent)
 	}
 }
 

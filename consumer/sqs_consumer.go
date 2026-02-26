@@ -49,10 +49,13 @@ type SQSConsumer[M any] struct {
 	visibilityTimeout        int32
 	visibilityExtendInterval time.Duration
 	processor                MessageProcessor[M]
+	concurrency              int
+	semaphore                chan struct{}
 }
 
 // NewSQSConsumer creates a new SQS consumer instance
 func NewSQSConsumer[M any](sqsClient SQSClientAPI, queueURL string, processor MessageProcessor[M]) *SQSConsumer[M] {
+	const defaultConcurrency = 10
 	return &SQSConsumer[M]{
 		sqsClient:                sqsClient,
 		queueURL:                 queueURL,
@@ -61,6 +64,8 @@ func NewSQSConsumer[M any](sqsClient SQSClientAPI, queueURL string, processor Me
 		visibilityTimeout:        30,               // Initial visibility timeout in seconds
 		visibilityExtendInterval: 10 * time.Second, // Extend every 10 seconds
 		processor:                processor,
+		concurrency:              defaultConcurrency,
+		semaphore:                make(chan struct{}, defaultConcurrency),
 	}
 }
 
@@ -72,6 +77,13 @@ func (c *SQSConsumer[M]) SetMaxMessages(max int32) {
 // SetVisibilityTimeout sets the initial visibility timeout for messages
 func (c *SQSConsumer[M]) SetVisibilityTimeout(timeout int32) {
 	c.visibilityTimeout = timeout
+}
+
+// SetConcurrency sets the maximum number of messages to process concurrently.
+// Must be called before Start.
+func (c *SQSConsumer[M]) SetConcurrency(n int) {
+	c.concurrency = n
+	c.semaphore = make(chan struct{}, n)
 }
 
 // Start begins consuming messages from the SQS queue
@@ -113,12 +125,20 @@ func (c *SQSConsumer[M]) processBatch(ctx context.Context) error {
 	MetricsMessagesReceived.Add(int64(len(result.Messages)))
 	log.Printf("Received %d messages\n", len(result.Messages))
 
-	// Process each message concurrently
+	// Process each message concurrently, respecting the concurrency limit
 	var wg sync.WaitGroup
+loop:
 	for _, message := range result.Messages {
+		// Acquire a semaphore slot, or stop if context is cancelled
+		select {
+		case c.semaphore <- struct{}{}:
+		case <-ctx.Done():
+			break loop
+		}
 		wg.Add(1)
 		go func(msg types.Message) {
 			defer wg.Done()
+			defer func() { <-c.semaphore }()
 			c.processMessage(ctx, msg)
 		}(message)
 	}

@@ -22,6 +22,16 @@ AWS credentials are loaded using the standard AWS SDK chain:
 2. Shared credentials file (`~/.aws/credentials`)
 3. IAM role for EC2 instances or ECS tasks
 
+## Consumer Options
+
+The following options can be configured programmatically on the `SQSConsumer` before calling `Start`:
+
+| Method | Default | Description |
+|--------|---------|-------------|
+| `SetMaxMessages(n int32)` | `10` | Maximum number of messages to receive per batch (SQS maximum is 10) |
+| `SetVisibilityTimeout(n int32)` | `30` | Initial visibility timeout in seconds |
+| `SetConcurrency(n int)` | `10` | Maximum number of messages processed concurrently across all batches |
+
 ## Message Format
 
 Messages in the SQS queue should be JSON formatted with the following structure:
