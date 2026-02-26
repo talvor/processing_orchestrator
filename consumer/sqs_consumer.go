@@ -24,6 +24,7 @@ var (
 	MetricsMessagesDecodeErrors = expvar.NewInt("sqs_consumer_messages_decode_errors")
 	MetricsMessagesDeleted      = expvar.NewInt("sqs_consumer_messages_deleted")
 	MetricsVisibilityExtensions = expvar.NewInt("sqs_consumer_visibility_extensions")
+	MetricsMessagesInFlight     = expvar.NewInt("sqs_consumer_messages_in_flight")
 )
 
 // MessageProcessor defines the interface for decoding and processing SQS messages.
@@ -136,9 +137,11 @@ loop:
 			break loop
 		}
 		wg.Add(1)
+		MetricsMessagesInFlight.Add(1)
 		go func(msg types.Message) {
 			defer wg.Done()
 			defer func() { <-c.semaphore }()
+			defer MetricsMessagesInFlight.Add(-1)
 			c.processMessage(ctx, msg)
 		}(message)
 	}
