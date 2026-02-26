@@ -12,6 +12,10 @@ SQS_QUEUE_NAME=test-workflow-queue
 AWS_REGION=us-east-1
 LOCALSTACK_ENDPOINT=http://localhost:$(LOCALSTACK_PORT)
 
+# Terraform configuration
+TERRAFORM_DIR=./terraform
+MAX_RECEIVE_COUNT=5
+
 .PHONY: build
 build: build-cli build-sqs-consumer
 	@echo "All binaries built successfully"
@@ -90,9 +94,41 @@ localstack-stop:
 	@echo "Localstack stopped and removed"
 
 .PHONY: localstack
-localstack: localstack-start localstack-setup-queue
+localstack: localstack-start terraform-apply
 	@echo ""
 	@echo "Localstack is ready for testing!"
+
+.PHONY: terraform-init
+terraform-init:
+	@echo "Initialising Terraform..."
+	@tofu -chdir=$(TERRAFORM_DIR) init
+
+.PHONY: terraform-plan
+terraform-plan:
+	@echo "Planning Terraform changes..."
+	@tofu -chdir=$(TERRAFORM_DIR) plan \
+		-var="aws_region=$(AWS_REGION)" \
+		-var="localstack_endpoint=$(LOCALSTACK_ENDPOINT)" \
+		-var="sqs_queue_name=$(SQS_QUEUE_NAME)" \
+		-var="max_receive_count=$(MAX_RECEIVE_COUNT)"
+
+.PHONY: terraform-apply
+terraform-apply:
+	@echo "Applying Terraform changes..."
+	@tofu -chdir=$(TERRAFORM_DIR) apply -auto-approve \
+		-var="aws_region=$(AWS_REGION)" \
+		-var="localstack_endpoint=$(LOCALSTACK_ENDPOINT)" \
+		-var="sqs_queue_name=$(SQS_QUEUE_NAME)" \
+		-var="max_receive_count=$(MAX_RECEIVE_COUNT)"
+
+.PHONY: terraform-destroy
+terraform-destroy:
+	@echo "Destroying Terraform-managed infrastructure..."
+	@tofu -chdir=$(TERRAFORM_DIR) destroy -auto-approve \
+		-var="aws_region=$(AWS_REGION)" \
+		-var="localstack_endpoint=$(LOCALSTACK_ENDPOINT)" \
+		-var="sqs_queue_name=$(SQS_QUEUE_NAME)" \
+		-var="max_receive_count=$(MAX_RECEIVE_COUNT)"
 
 .PHONY: test
 test:
@@ -127,10 +163,14 @@ help:
 	@echo "  build-sqs-consumer : Build the SQS consumer binary"
 	@echo "  clean              : Remove generated files"
 	@echo "  test               : Run all tests in the project"
-	@echo "  localstack         : Start Localstack and setup SQS queue (combined)"
+	@echo "  localstack         : Start Localstack and apply Terraform config (combined)"
 	@echo "  localstack-start   : Start Localstack container"
-	@echo "  localstack-setup-queue : Create SQS queue in Localstack"
+	@echo "  localstack-setup-queue : Create SQS queue in Localstack (legacy, use terraform-apply)"
 	@echo "  localstack-stop    : Stop and remove Localstack container"
+	@echo "  terraform-init     : Initialise OpenTofu in the terraform/ directory"
+	@echo "  terraform-plan     : Show Terraform plan for LocalStack SQS resources"
+	@echo "  terraform-apply    : Apply Terraform config to create SQS queues in LocalStack"
+	@echo "  terraform-destroy  : Destroy Terraform-managed SQS resources in LocalStack"
 	@echo "  start-sqs-consumer : Start the SQS consumer with Localstack configuration"
 	@echo "  help               : Display this help message"
 
