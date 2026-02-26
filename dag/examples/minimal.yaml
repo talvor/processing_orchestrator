@@ -1,8 +1,0 @@
-name: minimal configuration # DAG's name
-steps: # Steps inside the DAG
-  - name: step 1 # Step's name (should be unique within the file)
-    command: echo 'step 1'; sleep 1
-  - name: step 2
-    command: echo 'step 2'; sleep 2
-    depends:
-      - step 1 # [optional] Name of the step to depend on

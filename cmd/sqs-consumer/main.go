@@ -7,9 +7,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+
+	_ "expvar"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -19,6 +22,10 @@ import (
 )
 
 func main() {
+	go func() {
+		http.ListenAndServe(":8080", nil)
+	}()
+
 	// Get queue URL from environment variable
 	queueURL := os.Getenv("SQS_QUEUE_URL")
 	if queueURL == "" {
