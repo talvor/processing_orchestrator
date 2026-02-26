@@ -7,7 +7,6 @@ import (
 	"expvar"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -19,6 +18,7 @@ import (
 var (
 	MetricsBatchesProcessed     = expvar.NewInt("sqs_consumer_batches_processed")
 	MetricsMessagesReceived     = expvar.NewInt("sqs_consumer_messages_received")
+	MetricsMessagesInflight     = expvar.NewInt("sqs_consumer_messages_inflight")
 	MetricsMessagesProcessed    = expvar.NewInt("sqs_consumer_messages_processed")
 	MetricsMessagesFailed       = expvar.NewInt("sqs_consumer_messages_failed")
 	MetricsMessagesDecodeErrors = expvar.NewInt("sqs_consumer_messages_decode_errors")
@@ -49,11 +49,13 @@ type SQSConsumer[M any] struct {
 	visibilityTimeout        int32
 	visibilityExtendInterval time.Duration
 	processor                MessageProcessor[M]
+	concurrency              int
+	sem                      chan struct{}
 }
 
 // NewSQSConsumer creates a new SQS consumer instance
 func NewSQSConsumer[M any](sqsClient SQSClientAPI, queueURL string, processor MessageProcessor[M]) *SQSConsumer[M] {
-	return &SQSConsumer[M]{
+	c := &SQSConsumer[M]{
 		sqsClient:                sqsClient,
 		queueURL:                 queueURL,
 		maxMessages:              10,               // Default batch size
@@ -61,12 +63,31 @@ func NewSQSConsumer[M any](sqsClient SQSClientAPI, queueURL string, processor Me
 		visibilityTimeout:        30,               // Initial visibility timeout in seconds
 		visibilityExtendInterval: 10 * time.Second, // Extend every 10 seconds
 		processor:                processor,
+		concurrency:              10, // Default concurrency
 	}
+	c.sem = make(chan struct{}, c.concurrency)
+	return c
 }
 
 // SetMaxMessages sets the maximum number of messages to receive in a batch
 func (c *SQSConsumer[M]) SetMaxMessages(max int32) {
 	c.maxMessages = max
+}
+
+// SetConcurrency sets the maximum number of messages that can be processed concurrently.
+// It must be called before Start; calling it after the consumer has started is not safe.
+// n must be at least 1; smaller values are clamped to 1.
+func (c *SQSConsumer[M]) SetConcurrency(n int) {
+	if n < 1 {
+		n = 1
+	}
+	c.concurrency = n
+	c.sem = make(chan struct{}, n)
+}
+
+// MessagesInflight returns the number of messages currently being processed
+func (c *SQSConsumer[M]) MessagesInflight() int {
+	return len(c.sem)
 }
 
 // SetVisibilityTimeout sets the initial visibility timeout for messages
@@ -93,37 +114,67 @@ func (c *SQSConsumer[M]) Start(ctx context.Context) error {
 
 // processBatch receives and processes a batch of messages
 func (c *SQSConsumer[M]) processBatch(ctx context.Context) error {
-	// Receive messages from the queue
+	// Block until at least one concurrency slot is available
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case c.sem <- struct{}{}:
+	}
+
+	// Try to acquire additional slots without blocking
+	slotsAcquired := 1
+acquireLoop:
+	for slotsAcquired < int(c.maxMessages) {
+		select {
+		case c.sem <- struct{}{}:
+			slotsAcquired++
+		default:
+			break acquireLoop
+		}
+	}
+
+	// Receive messages from the queue (up to the number of acquired slots)
 	result, err := c.sqsClient.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(c.queueURL),
-		MaxNumberOfMessages: c.maxMessages,
+		MaxNumberOfMessages: int32(slotsAcquired),
 		WaitTimeSeconds:     c.waitTimeSeconds,
 		VisibilityTimeout:   c.visibilityTimeout,
 	})
 	if err != nil {
+		for i := 0; i < slotsAcquired; i++ {
+			<-c.sem
+		}
 		return fmt.Errorf("failed to receive messages: %w", err)
 	}
 
 	MetricsBatchesProcessed.Add(1)
 
-	if len(result.Messages) == 0 {
+	received := len(result.Messages)
+
+	// Release excess slots not needed for the received messages
+	for i := received; i < slotsAcquired; i++ {
+		<-c.sem
+	}
+
+	if received == 0 {
 		return nil
 	}
 
-	MetricsMessagesReceived.Add(int64(len(result.Messages)))
-	log.Printf("Received %d messages\n", len(result.Messages))
+	MetricsMessagesReceived.Add(int64(received))
+	MetricsMessagesInflight.Add(int64(received))
+	log.Printf("Received %d messages\n", received)
 
-	// Process each message concurrently
-	var wg sync.WaitGroup
+	// Process each message in its own goroutine; release the slot when done
 	for _, message := range result.Messages {
-		wg.Add(1)
 		go func(msg types.Message) {
-			defer wg.Done()
+			defer func() {
+				<-c.sem
+				MetricsMessagesInflight.Add(-1)
+			}()
 			c.processMessage(ctx, msg)
 		}(message)
 	}
 
-	wg.Wait()
 	return nil
 }
 

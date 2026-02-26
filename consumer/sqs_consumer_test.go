@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -287,6 +288,15 @@ func TestMetricsMessagesReceived(t *testing.T) {
 
 	_ = consumer.processBatch(context.Background())
 
+	// Wait for the processing goroutine to finish to avoid leaking into subsequent tests
+	deadline := time.Now().Add(2 * time.Second)
+	for consumer.MessagesInflight() != 0 {
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	if got := MetricsMessagesReceived.Value() - before; got != 1 {
 		t.Errorf("Expected MetricsMessagesReceived to increment by 1, got %d", got)
 	}
@@ -400,5 +410,173 @@ func TestMetricsVisibilityExtensions(t *testing.T) {
 
 	if got := MetricsVisibilityExtensions.Value() - before; got < 1 {
 		t.Errorf("Expected MetricsVisibilityExtensions to increment by at least 1, got %d", got)
+	}
+}
+
+func TestSetConcurrency(t *testing.T) {
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+
+	consumer.SetConcurrency(5)
+
+	if consumer.concurrency != 5 {
+		t.Errorf("Expected concurrency to be 5, got %d", consumer.concurrency)
+	}
+	if cap(consumer.sem) != 5 {
+		t.Errorf("Expected semaphore capacity to be 5, got %d", cap(consumer.sem))
+	}
+}
+
+func TestDefaultConcurrency(t *testing.T) {
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+
+	if consumer.concurrency != 10 {
+		t.Errorf("Expected default concurrency to be 10, got %d", consumer.concurrency)
+	}
+	if cap(consumer.sem) != 10 {
+		t.Errorf("Expected default semaphore capacity to be 10, got %d", cap(consumer.sem))
+	}
+}
+
+func TestMessagesInflight(t *testing.T) {
+	processingStarted := make(chan struct{})
+	processingBlock := make(chan struct{})
+
+	messageId := "msg-inflight-1"
+	receiptHandle := "rh-inflight-1"
+	body := `"hello"`
+
+	mockClient := &MockSQSClient{
+		ReceiveMessageFunc: func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []types.Message{
+					{MessageId: &messageId, ReceiptHandle: &receiptHandle, Body: &body},
+				},
+			}, nil
+		},
+	}
+	mockProcessor := &MockMessageProcessor[string]{
+		DecodeMessageFunc: func(b string) (string, error) { return b, nil },
+		ProcessMessageFunc: func(ctx context.Context, msg string) error {
+			close(processingStarted)
+			<-processingBlock
+			return nil
+		},
+	}
+
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+	consumer.visibilityExtendInterval = time.Hour // prevent visibility extensions during test
+
+	_ = consumer.processBatch(context.Background())
+
+	// Wait for processing to start
+	<-processingStarted
+
+	if got := consumer.MessagesInflight(); got != 1 {
+		t.Errorf("Expected MessagesInflight to be 1 while processing, got %d", got)
+	}
+
+	// Unblock processing
+	close(processingBlock)
+
+	// Poll until the goroutine releases its slot
+	deadline := time.Now().Add(2 * time.Second)
+	for consumer.MessagesInflight() != 0 {
+		if time.Now().After(deadline) {
+			t.Error("Timeout waiting for MessagesInflight to reach 0")
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := consumer.MessagesInflight(); got != 0 {
+		t.Errorf("Expected MessagesInflight to be 0 after processing, got %d", got)
+	}
+}
+
+func TestConcurrencyLimit(t *testing.T) {
+	const concurrencyLimit = 3
+	const totalMessages = 5
+
+	processingStarted := make(chan struct{}, totalMessages)
+	processingBlock := make(chan struct{})
+
+	messages := make([]types.Message, totalMessages)
+	for i := 0; i < totalMessages; i++ {
+		id := fmt.Sprintf("msg-%d", i)
+		rh := fmt.Sprintf("rh-%d", i)
+		body := `"hello"`
+		messages[i] = types.Message{MessageId: &id, ReceiptHandle: &rh, Body: &body}
+	}
+
+	callCount := 0
+	mockClient := &MockSQSClient{
+		ReceiveMessageFunc: func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+			max := int(params.MaxNumberOfMessages)
+			start := callCount
+			end := start + max
+			if end > len(messages) {
+				end = len(messages)
+			}
+			callCount = end
+			batch := messages[start:end]
+			return &sqs.ReceiveMessageOutput{Messages: batch}, nil
+		},
+	}
+	mockProcessor := &MockMessageProcessor[string]{
+		DecodeMessageFunc: func(b string) (string, error) { return b, nil },
+		ProcessMessageFunc: func(ctx context.Context, msg string) error {
+			processingStarted <- struct{}{}
+			<-processingBlock
+			return nil
+		},
+	}
+
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+	consumer.SetConcurrency(concurrencyLimit)
+	consumer.visibilityExtendInterval = time.Hour
+
+	// First batch: fills concurrencyLimit slots
+	_ = consumer.processBatch(context.Background())
+
+	// Wait for all goroutines in the first batch to start
+	for i := 0; i < concurrencyLimit; i++ {
+		<-processingStarted
+	}
+
+	// At concurrency limit: next processBatch should block; run in goroutine
+	batchDone := make(chan error, 1)
+	go func() {
+		batchDone <- consumer.processBatch(context.Background())
+	}()
+
+	// Poll until the semaphore is full, confirming the second batch is blocked
+	deadline := time.Now().Add(2 * time.Second)
+	for len(consumer.sem) < concurrencyLimit {
+		if time.Now().After(deadline) {
+			t.Error("Timeout waiting for semaphore to fill")
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := consumer.MessagesInflight(); got != concurrencyLimit {
+		t.Errorf("Expected MessagesInflight to be %d at limit, got %d", concurrencyLimit, got)
+	}
+
+	// Unblock all processing goroutines
+	close(processingBlock)
+
+	// The blocked processBatch should now complete
+	select {
+	case err := <-batchDone:
+		if err != nil {
+			t.Errorf("Expected nil error from processBatch, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("processBatch did not unblock after slots were freed")
 	}
 }
