@@ -5,6 +5,8 @@ The SQS Consumer is a service that reads workflow execution requests from an AWS
 ## Features
 
 - **Batch Processing**: Receives and processes up to 10 messages at a time (configurable)
+- **Configurable Concurrency**: Limits the number of messages processed simultaneously (default: 10)
+- **Inflight Tracking**: Tracks the number of messages currently being processed
 - **Parallel Execution**: Processes multiple workflows concurrently
 - **Visibility Timeout Extension**: Automatically extends message visibility timeout while workflows are processing
 - **Automatic Retry**: Failed workflows remain in the queue for reprocessing
@@ -128,14 +130,36 @@ CMD ["./sqs_consumer"]
 
 ### Message Processing Flow
 
-1. Consumer receives a batch of messages from the SQS queue (long polling with 20s wait)
-2. For each message:
+1. Consumer blocks until at least one concurrency slot is available
+2. Consumer acquires as many additional free slots as possible (up to `maxMessages`)
+3. Consumer fetches that many messages from the SQS queue (long polling with 20s wait)
+4. Any unused slots are immediately released
+5. Each received message is processed in its own goroutine:
    - Parse the JSON to extract the workflow file path
    - Create a workflow from the specified YAML file
    - Start extending the message visibility timeout in the background (every 10 seconds)
    - Execute the workflow
    - If successful: Delete the message from the queue
    - If failed: Stop extending visibility timeout and let the message return to the queue
+   - Release the concurrency slot so the next poll can proceed
+
+### Concurrency
+
+The consumer uses a semaphore to enforce a configurable limit on the number of messages processed simultaneously.
+
+- **Default concurrency**: 10
+- The consumer will not fetch more messages than there are available concurrency slots
+- When all slots are occupied the polling loop blocks until at least one slot is freed
+- The current number of in-flight messages is exposed via `MessagesInflight()` and the `sqs_consumer_messages_inflight` expvar metric
+
+```go
+consumer := NewSQSConsumer(sqsClient, queueURL, processor)
+consumer.SetConcurrency(20) // process up to 20 messages simultaneously
+consumer.Start(ctx)
+
+// Inspect inflight at any time
+fmt.Println(consumer.MessagesInflight())
+```
 
 ### Visibility Timeout
 
@@ -200,7 +224,22 @@ aws sqs send-message \
 
 ## Monitoring
 
-The consumer logs important events:
+The consumer exports metrics via [expvar](https://pkg.go.dev/expvar) and logs important events.
+
+### Metrics
+
+| Metric | Description |
+|---|---|
+| `sqs_consumer_batches_processed` | Total number of batches polled from SQS |
+| `sqs_consumer_messages_received` | Total number of messages received |
+| `sqs_consumer_messages_inflight` | Current number of messages being processed |
+| `sqs_consumer_messages_processed` | Total number of messages successfully processed |
+| `sqs_consumer_messages_failed` | Total number of messages that failed processing |
+| `sqs_consumer_messages_decode_errors` | Total number of messages that failed to decode |
+| `sqs_consumer_messages_deleted` | Total number of messages deleted from the queue |
+| `sqs_consumer_visibility_extensions` | Total number of visibility timeout extensions |
+
+### Logs
 
 - Starting and stopping
 - Messages received
