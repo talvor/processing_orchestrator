@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -247,5 +248,157 @@ func TestStartWithContextCancellation(t *testing.T) {
 
 	if !receiveCalled {
 		t.Error("Expected ReceiveMessage to be called")
+	}
+}
+
+func TestMetricsBatchesProcessed(t *testing.T) {
+	before := MetricsBatchesProcessed.Value()
+
+	mockClient := &MockSQSClient{
+		ReceiveMessageFunc: func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+			return &sqs.ReceiveMessageOutput{Messages: []types.Message{}}, nil
+		},
+	}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", &MockMessageProcessor[string]{})
+
+	_ = consumer.processBatch(context.Background())
+
+	if got := MetricsBatchesProcessed.Value() - before; got != 1 {
+		t.Errorf("Expected MetricsBatchesProcessed to increment by 1, got %d", got)
+	}
+}
+
+func TestMetricsMessagesReceived(t *testing.T) {
+	before := MetricsMessagesReceived.Value()
+
+	messageId := "msg-recv-1"
+	receiptHandle := "rh-recv-1"
+	body := `"hello"`
+	mockClient := &MockSQSClient{
+		ReceiveMessageFunc: func(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []types.Message{
+					{MessageId: &messageId, ReceiptHandle: &receiptHandle, Body: &body},
+				},
+			}, nil
+		},
+	}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", &MockMessageProcessor[string]{})
+
+	_ = consumer.processBatch(context.Background())
+
+	if got := MetricsMessagesReceived.Value() - before; got != 1 {
+		t.Errorf("Expected MetricsMessagesReceived to increment by 1, got %d", got)
+	}
+}
+
+func TestMetricsMessagesProcessed(t *testing.T) {
+	before := MetricsMessagesProcessed.Value()
+
+	messageId := "msg-ok-1"
+	receiptHandle := "rh-ok-1"
+	body := `"hello"`
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{
+		DecodeMessageFunc: func(b string) (string, error) { return b, nil },
+		ProcessMessageFunc: func(ctx context.Context, msg string) error { return nil },
+	}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+	consumer.processMessage(context.Background(), types.Message{
+		MessageId: &messageId, ReceiptHandle: &receiptHandle, Body: &body,
+	})
+
+	if got := MetricsMessagesProcessed.Value() - before; got != 1 {
+		t.Errorf("Expected MetricsMessagesProcessed to increment by 1, got %d", got)
+	}
+}
+
+func TestMetricsMessagesFailed(t *testing.T) {
+	before := MetricsMessagesFailed.Value()
+
+	messageId := "msg-fail-1"
+	receiptHandle := "rh-fail-1"
+	body := `"hello"`
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{
+		DecodeMessageFunc:  func(b string) (string, error) { return b, nil },
+		ProcessMessageFunc: func(ctx context.Context, msg string) error { return errors.New("processing error") },
+	}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+	consumer.processMessage(context.Background(), types.Message{
+		MessageId: &messageId, ReceiptHandle: &receiptHandle, Body: &body,
+	})
+
+	if got := MetricsMessagesFailed.Value() - before; got != 1 {
+		t.Errorf("Expected MetricsMessagesFailed to increment by 1, got %d", got)
+	}
+}
+
+func TestMetricsMessagesDecodeErrors(t *testing.T) {
+	before := MetricsMessagesDecodeErrors.Value()
+
+	messageId := "msg-decode-err-1"
+	receiptHandle := "rh-decode-err-1"
+	body := `bad-json`
+	mockClient := &MockSQSClient{}
+	mockProcessor := &MockMessageProcessor[string]{
+		DecodeMessageFunc: func(b string) (string, error) { return "", errors.New("decode error") },
+	}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", mockProcessor)
+	consumer.processMessage(context.Background(), types.Message{
+		MessageId: &messageId, ReceiptHandle: &receiptHandle, Body: &body,
+	})
+
+	if got := MetricsMessagesDecodeErrors.Value() - before; got != 1 {
+		t.Errorf("Expected MetricsMessagesDecodeErrors to increment by 1, got %d", got)
+	}
+}
+
+func TestMetricsMessagesDeleted(t *testing.T) {
+	before := MetricsMessagesDeleted.Value()
+
+	messageId := "msg-del-1"
+	receiptHandle := "rh-del-1"
+	mockClient := &MockSQSClient{}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", &MockMessageProcessor[string]{})
+	consumer.deleteMessage(context.Background(), types.Message{
+		MessageId: &messageId, ReceiptHandle: &receiptHandle,
+	})
+
+	if got := MetricsMessagesDeleted.Value() - before; got != 1 {
+		t.Errorf("Expected MetricsMessagesDeleted to increment by 1, got %d", got)
+	}
+}
+
+func TestMetricsVisibilityExtensions(t *testing.T) {
+	before := MetricsVisibilityExtensions.Value()
+
+	extendCalled := make(chan struct{}, 1)
+	mockClient := &MockSQSClient{
+		ChangeMessageVisibilityFunc: func(ctx context.Context, params *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error) {
+			select {
+			case extendCalled <- struct{}{}:
+			default:
+			}
+			return &sqs.ChangeMessageVisibilityOutput{}, nil
+		},
+	}
+	consumer := NewSQSConsumer(mockClient, "test-queue-url", &MockMessageProcessor[string]{})
+	consumer.visibilityExtendInterval = 20 * time.Millisecond
+
+	messageId := "msg-vis-1"
+	receiptHandle := "rh-vis-1"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go consumer.extendVisibilityTimeout(ctx, types.Message{
+		MessageId: &messageId, ReceiptHandle: &receiptHandle,
+	}, done)
+
+	<-extendCalled
+	cancel()
+	<-done
+
+	if got := MetricsVisibilityExtensions.Value() - before; got < 1 {
+		t.Errorf("Expected MetricsVisibilityExtensions to increment by at least 1, got %d", got)
 	}
 }
