@@ -25,7 +25,7 @@ steps:
   # ── Parallel data fetch ───────────────────────────────────────────────────
   - name: fetch_users
     description: Download the latest users dataset
-    command: "echo 'Fetching users...' && sleep 1 && echo 'users_dataset'"
+    command: "echo 'Fetching users...' && sleep 3 && echo 'users_dataset'"
     depends:
       - initialise
     output:
@@ -35,7 +35,7 @@ steps:
 
   - name: fetch_orders
     description: Download the latest orders dataset
-    command: "echo 'Fetching orders...' && sleep 1 && echo 'orders_dataset'"
+    command: "echo 'Fetching orders...' && sleep 2 && echo 'orders_dataset'"
     depends:
       - initialise
     output:
@@ -46,7 +46,7 @@ steps:
   # ── Parallel processing (each stream uses output from its own fetch) ───────
   - name: process_users
     description: Clean and enrich the users data
-    command: "echo 'Processing: $users_data'"
+    command: "echo 'Processing: $users_data' && sleep 5"
     depends:
       - fetch_users
     console:
@@ -54,7 +54,7 @@ steps:
 
   - name: process_orders
     description: Validate and transform the orders data
-    command: "echo 'Processing: $orders_data'"
+    command: "echo 'Processing: $orders_data' && sleep 2"
     depends:
       - fetch_orders
     console:
