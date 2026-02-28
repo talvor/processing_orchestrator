@@ -1,0 +1,22 @@
+name: after example
+steps:
+  - name: start
+    command: echo start
+  - name: process_a
+    command: echo process_a
+    depends:
+      - start
+  - name: process_b
+    command: echo process_b
+    depends:
+      - process_a
+  - name: side_task
+    command: echo side_task
+    depends:
+      - start
+  - name: cleanup
+    command: echo cleanup
+    # 'after: [start]' means cleanup runs after 'start' AND ALL of start's dependents
+    # (process_a, process_b, side_task) have completed.
+    after:
+      - start
