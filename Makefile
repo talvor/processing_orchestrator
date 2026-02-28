@@ -40,12 +40,16 @@ clean:
 .PHONY: localstack-start
 localstack-start:
 	@echo "Starting Localstack container..."
-	@docker run -d \
-		--name $(LOCALSTACK_CONTAINER_NAME) \
-		-p $(LOCALSTACK_PORT):4566 \
-		-e SERVICES=sqs \
-		-e DEBUG=1 \
-		localstack/localstack:latest
+	@if [ "$$(docker ps -q -f name=$(LOCALSTACK_CONTAINER_NAME))" ]; then \
+		echo "Localstack is already running"; \
+	else \
+		docker run -d \
+			--name $(LOCALSTACK_CONTAINER_NAME) \
+			-p $(LOCALSTACK_PORT):4566 \
+			-e SERVICES=sqs \
+			-e DEBUG=1 \
+			localstack/localstack:latest; \
+	fi
 	@echo "Waiting for Localstack to be ready..."
 	@sleep 5
 	@echo "Localstack started on port $(LOCALSTACK_PORT)"
@@ -153,7 +157,12 @@ send-test-message:
 	export AWS_SECRET_ACCESS_KEY=test && \
 	aws --endpoint-url=http://localhost:4566 --region us-east-1 sqs send-message \
 	  --queue-url http://localhost:4566/000000000000/test-workflow-queue \
-		--message-body '{"workflow_file":"$(CURRENT_DIR)/examples/complex.yaml"}'
+		--message-body '{"workflow_file":"/app/examples/video-workflow.yaml"}'
+
+.PHONY: docker-build
+docker-build:
+	@echo "Building Docker image for SQS consumer..."
+	@docker build -t sqs-consumer:latest .
 
 .PHONY: help
 help:
