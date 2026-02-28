@@ -13,7 +13,6 @@ steps:
   # 'processing' is a noop step used to group fetch, transform and validate together.
   # Other steps can use `after: [processing]` to run after the entire processing group completes.
   - name: processing
-    noop: true
     depends:
       - transform_data
       - validate_data

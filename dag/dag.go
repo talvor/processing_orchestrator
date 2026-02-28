@@ -5,7 +5,6 @@ package dag
 type Node struct {
 	Name            string       // Unique name of the step
 	Description     string       // Description of this step
-	Noop            bool         // Whether this is a no-op step (no command or script required)
 	Command         string       // Command to run for the step
 	Script          string       // Script to run for the step (multiline string)
 	Args            []string     // Arguments for the command

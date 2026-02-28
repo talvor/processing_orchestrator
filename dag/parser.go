@@ -35,7 +35,6 @@ type Output struct {
 type Step struct {
 	Name            string       `yaml:"name"`                        // Unique name of the step
 	Description     string       `yaml:"description,omitempty"`       // Description of this step
-	Noop            bool         `yaml:"noop,omitempty"`              // Whether this is a no-op step (no command or script required)
 	Command         string       `yaml:"command,omitempty"`           // Command to run for the step
 	Script          string       `yaml:"script,omitempty"`            // Script to run for the step (multiline YAML string)
 	Args            []string     `yaml:"args,omitempty"`              // Arguments for the command
@@ -79,7 +78,6 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 	for _, step := range config.Steps {
 		node := &Node{
 			Name:            step.Name,
-			Noop:            step.Noop,
 			Command:         step.Command,
 			Script:          step.Script,
 			Args:            step.Args,

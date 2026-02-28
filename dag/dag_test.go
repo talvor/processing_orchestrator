@@ -24,46 +24,30 @@ func TestLoadAndValidateDAG(t *testing.T) {
 	t.Log("DAG loaded and validated successfully")
 }
 
-// TestValidateMissingCommandAndScript tests that a node without command or script fails validation
-func TestValidateMissingCommandAndScript(t *testing.T) {
+// TestValidateNoCommandOrScript tests that a node without command or script is valid (inferred as noop)
+func TestValidateNoCommandOrScript(t *testing.T) {
 	dag := NewDAG("test")
 	dag.Nodes["A"] = &Node{
 		Name: "A",
-		// No Command or Script
+		// No Command or Script — treated as a noop step
 	}
 
 	err := dag.Validate()
-	if err == nil {
-		t.Errorf("Expected validation to fail for node without command or script")
+	if err != nil {
+		t.Errorf("Expected node without command or script to pass validation as noop, got: %v", err)
 	}
 }
 
-// TestValidateNoopStep tests that a noop node passes validation without command or script.
+// TestValidateNoopStep tests that a node with no command or script passes validation.
 func TestValidateNoopStep(t *testing.T) {
 	dag := NewDAG("test")
 	dag.Nodes["A"] = &Node{
 		Name: "A",
-		Noop: true,
 	}
 
 	err := dag.Validate()
 	if err != nil {
 		t.Errorf("Expected noop node to pass validation, got: %v", err)
-	}
-}
-
-// TestValidateNoopStepWithCommand tests that a noop node with a command fails validation.
-func TestValidateNoopStepWithCommand(t *testing.T) {
-	dag := NewDAG("test")
-	dag.Nodes["A"] = &Node{
-		Name:    "A",
-		Noop:    true,
-		Command: "echo hello",
-	}
-
-	err := dag.Validate()
-	if err == nil {
-		t.Errorf("Expected validation to fail for noop node with command")
 	}
 }
 
@@ -203,8 +187,8 @@ func TestLoadDAGWithNoop(t *testing.T) {
 		t.Fatalf("Expected 'processing' noop node to exist")
 	}
 
-	if !processing.Noop {
-		t.Errorf("Expected 'processing' node to be a noop step")
+	if processing.Command != "" || processing.Script != "" {
+		t.Errorf("Expected 'processing' node to have no command or script (inferred noop)")
 	}
 
 	// load_data uses `after: [processing]`, so it should depend on processing

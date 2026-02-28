@@ -815,8 +815,8 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 		return err
 	}
 
-	// Noop steps complete immediately without executing anything
-	if node.Noop {
+	// Noop steps (no command or script) complete immediately without executing anything
+	if node.Command == "" && node.Script == "" {
 		return nil
 	}
 
