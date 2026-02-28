@@ -60,7 +60,7 @@ localstack-stop:
 	@docker rm $(LOCALSTACK_CONTAINER_NAME) 2>/dev/null || true
 	@echo "Localstack stopped and removed"
 
-.PHONY: localstack
-localstack: localstack-start terraform-apply
+.PHONY: localstack-up
+localstack-up: localstack-start terraform-apply
 	@echo ""
 	@echo "Localstack is ready for testing!"
