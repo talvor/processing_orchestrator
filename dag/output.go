@@ -11,8 +11,8 @@ func (d *DAG) OutputMetadata() string {
 
 	buffer.WriteString("DAG Metadata:\n")
 
-	buffer.WriteString(fmt.Sprintf("- Name: %s\n", d.Name))
-	buffer.WriteString(fmt.Sprintf("- Params: %v\n", d.Params))
+	fmt.Fprintf(&buffer, "- Name: %s\n", d.Name)
+	fmt.Fprintf(&buffer, "- Params: %v\n", d.Params)
 
 	return buffer.String()
 }
