@@ -5,14 +5,15 @@ package main
 
 import (
 	"context"
+	"expvar"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
-
-	_ "expvar"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -21,10 +22,23 @@ import (
 	"processing_pipeline/workflow"
 )
 
+// Metrics exported via expvar for monitoring the go runtime.
+var (
+	MetricsGoRoutineCount = expvar.NewInt("go_goroutine_count")
+)
+
+func exportGoroutines() {
+	for range time.Tick(time.Second) {
+		MetricsGoRoutineCount.Set(int64(runtime.NumGoroutine()))
+	}
+}
+
 func main() {
 	go func() {
 		http.ListenAndServe(":8080", nil)
 	}()
+
+	go exportGoroutines()
 
 	// Get queue URL from environment variable
 	queueURL := os.Getenv("SQS_QUEUE_URL")
