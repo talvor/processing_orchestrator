@@ -38,6 +38,35 @@ func TestValidateMissingCommandAndScript(t *testing.T) {
 	}
 }
 
+// TestValidateNoopStep tests that a noop node passes validation without command or script.
+func TestValidateNoopStep(t *testing.T) {
+	dag := NewDAG("test")
+	dag.Nodes["A"] = &Node{
+		Name: "A",
+		Noop: true,
+	}
+
+	err := dag.Validate()
+	if err != nil {
+		t.Errorf("Expected noop node to pass validation, got: %v", err)
+	}
+}
+
+// TestValidateNoopStepWithCommand tests that a noop node with a command fails validation.
+func TestValidateNoopStepWithCommand(t *testing.T) {
+	dag := NewDAG("test")
+	dag.Nodes["A"] = &Node{
+		Name:    "A",
+		Noop:    true,
+		Command: "echo hello",
+	}
+
+	err := dag.Validate()
+	if err == nil {
+		t.Errorf("Expected validation to fail for noop node with command")
+	}
+}
+
 // TestValidateBothCommandAndScript tests that a node with both command and script fails validation
 func TestValidateBothCommandAndScript(t *testing.T) {
 	dag := NewDAG("test")
@@ -154,6 +183,48 @@ func TestAfterDescendants(t *testing.T) {
 	}
 	if len(desc) != 4 {
 		t.Errorf("Expected 4 descendants, got %d: %v", len(desc), desc)
+	}
+}
+
+// TestLoadDAGWithNoop tests that a noop step is loaded and validated correctly from YAML,
+// and that steps using `after` on a noop step get the correct dependencies resolved.
+func TestLoadDAGWithNoop(t *testing.T) {
+	dag, err := LoadDAGFromYAML("../dag/examples/noop.yaml")
+	if err != nil {
+		t.Fatalf("Failed to load noop DAG from YAML: %v", err)
+	}
+
+	if err := dag.Validate(); err != nil {
+		t.Fatalf("Noop DAG validation failed: %v", err)
+	}
+
+	processing := dag.Nodes["processing"]
+	if processing == nil {
+		t.Fatalf("Expected 'processing' noop node to exist")
+	}
+
+	if !processing.Noop {
+		t.Errorf("Expected 'processing' node to be a noop step")
+	}
+
+	// load_data uses `after: [processing]`, so it should depend on processing
+	// and all of processing's descendants (nodes that depend on it). Since no
+	// other step depends on processing, the only dependency added is processing itself.
+	loadData := dag.Nodes["load_data"]
+	if loadData == nil {
+		t.Fatalf("Expected 'load_data' node to exist")
+	}
+
+	expectedDeps := map[string]bool{
+		"processing": true,
+	}
+	if len(loadData.Depends) != len(expectedDeps) {
+		t.Errorf("Expected load_data to have %d depends, got %d: %v", len(expectedDeps), len(loadData.Depends), loadData.Depends)
+	}
+	for _, dep := range loadData.Depends {
+		if !expectedDeps[dep] {
+			t.Errorf("Unexpected dependency %q in load_data.Depends", dep)
+		}
 	}
 }
 

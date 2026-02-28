@@ -29,11 +29,18 @@ func (d *DAG) Validate() error {
 	for _, node := range d.Nodes {
 		hasCommand := node.Command != ""
 		hasScript := node.Script != ""
-		
+
+		if node.Noop {
+			if hasCommand || hasScript {
+				return errors.New("node \"" + node.Name + "\" is a noop step and cannot have 'command' or 'script' specified")
+			}
+			continue
+		}
+
 		if !hasCommand && !hasScript {
 			return errors.New("node \"" + node.Name + "\" must have either 'command' or 'script' specified")
 		}
-		
+
 		if hasCommand && hasScript {
 			return errors.New("node \"" + node.Name + "\" cannot have both 'command' and 'script' specified")
 		}

@@ -815,6 +815,11 @@ func (wo *Orchestrator) executeNodeWithContext(ctx context.Context, nodeName str
 		return err
 	}
 
+	// Noop steps complete immediately without executing anything
+	if node.Noop {
+		return nil
+	}
+
 	// Check preconditions
 	if err := wo.checkPreconditions(ctx, node, params); err != nil {
 		return err
