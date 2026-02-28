@@ -1,0 +1,115 @@
+# Example workflow demonstrating both "depends" and "after" step properties.
+#
+# "depends" — data dependency: a step requires the output or result of another step.
+# "after"   — ordering constraint: a step must run after the specified step AND ALL of
+#              its transitive dependents have completed, without implying any data coupling.
+#
+# Scenario: A nightly data pipeline that:
+#   1. Initialises the environment and fetches data in parallel streams.
+#   2. Processes each stream independently.
+#   3. Merges the streams and generates a final report.
+#   4. Sends the report to stakeholders (depends on the report being ready).
+#   5. Audits the run and cleans up temp files — both must run only once ALL
+#      pipeline work is finished, but neither needs data from any specific step.
+
+name: data pipeline with after
+
+steps:
+  # ── Initialisation ────────────────────────────────────────────────────────
+  - name: initialise
+    description: Set up working directories and validate environment
+    command: "mkdir -p /tmp/pipeline && echo 'Environment ready'"
+    console:
+      stdout: true
+
+  # ── Parallel data fetch ───────────────────────────────────────────────────
+  - name: fetch_users
+    description: Download the latest users dataset
+    command: "echo 'Fetching users...' && sleep 1 && echo 'users_dataset'"
+    depends:
+      - initialise
+    output:
+      stdout: users_data
+    console:
+      stdout: true
+
+  - name: fetch_orders
+    description: Download the latest orders dataset
+    command: "echo 'Fetching orders...' && sleep 1 && echo 'orders_dataset'"
+    depends:
+      - initialise
+    output:
+      stdout: orders_data
+    console:
+      stdout: true
+
+  # ── Parallel processing (each stream uses output from its own fetch) ───────
+  - name: process_users
+    description: Clean and enrich the users data
+    command: "echo 'Processing: $users_data'"
+    depends:
+      - fetch_users
+    console:
+      stdout: true
+
+  - name: process_orders
+    description: Validate and transform the orders data
+    command: "echo 'Processing: $orders_data'"
+    depends:
+      - fetch_orders
+    console:
+      stdout: true
+
+  # ── Merge & report ────────────────────────────────────────────────────────
+  - name: merge_datasets
+    description: Join processed users and orders into a single dataset
+    command: "echo 'Merging datasets' && echo 'merged_dataset'"
+    depends:
+      - process_users
+      - process_orders
+    output:
+      stdout: merged_data
+    console:
+      stdout: true
+
+  - name: generate_report
+    description: Produce the final summary report from the merged dataset
+    command: "echo 'Generating report from: $merged_data'"
+    depends:
+      - merge_datasets
+    console:
+      stdout: true
+
+  - name: send_report
+    description: Email the report to stakeholders
+    command: "echo 'Sending report to stakeholders'"
+    depends:
+      - generate_report
+    console:
+      stdout: true
+
+  # ── Post-pipeline housekeeping (uses "after", not "depends") ──────────────
+  #
+  # audit_run must execute only once the ENTIRE pipeline (both processing
+  # streams and all reporting) is done.  It does not consume any step output,
+  # so "depends" would be semantically incorrect.  Using "after: [initialise]"
+  # tells the orchestrator to wait for "initialise" AND every step that
+  # transitively descends from it (i.e., the whole pipeline) to finish first.
+  - name: audit_run
+    description: Record pipeline metrics and outcomes to the audit log
+    command: "echo 'Audit complete'"
+    after:
+      - initialise
+    console:
+      stdout: true
+
+  # cleanup_temp_files similarly must run last, but after the entire pipeline.
+  # Using "after: [initialise]" again expresses this ordering without coupling
+  # it to any specific step's output.
+  - name: cleanup_temp_files
+    description: Remove temporary working files
+    command: "rm -rf /tmp/pipeline && echo 'Cleanup done'"
+    after:
+      - initialise
+    console:
+      stdout: true

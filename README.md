@@ -31,7 +31,8 @@ Each step in the workflow can have the following properties:
 #### Optional Properties
 - **`description`** *(string)*: A human-readable description of what the step does.
 - **`args`** *(array of strings)*: Arguments to pass to the command. These are passed as separate arguments, not concatenated to the command string. Only used with `command`, not with `script`.
-- **`depends`** *(array of strings)*: List of step names that must complete successfully before this step can execute.
+- **`depends`** *(array of strings)*: List of step names that must complete successfully before this step can execute. Use this when the step requires the **output or result** of another step.
+- **`after`** *(array of strings)*: List of step names after which this step must be scheduled. Unlike `depends`, `after` is a pure **ordering constraint** — the step is guaranteed to run only once the referenced step **and all of its transitive dependents** (i.e., all steps that depend on it, directly or indirectly) have completed. Use this when the ordering matters but the step does not consume data from those steps.
 - **`preconditions`** *(array of conditions)*: Conditions that must be met before the step executes. Each condition has:
   - `predicate`: Command to execute that returns a result
   - `expected`: Expected output from the predicate
@@ -190,6 +191,9 @@ The orchestrator executes steps in parallel when possible, respecting dependenci
 ### Dependency Management
 Steps can declare dependencies on other steps using the `depends` field. The orchestrator ensures that a step only executes after all its dependencies have completed successfully.
 
+### Ordering Constraints
+Steps can use the `after` field to declare that they must run after another step **and all of that step's transitive dependents** (i.e., all steps that depend on it, directly or indirectly) have completed. Unlike `depends`, `after` carries no data-coupling implication — it is a pure scheduling constraint. This is useful for housekeeping tasks (auditing, cleanup) that must run last but do not need specific outputs from the pipeline.
+
 ### Conditional Execution
 Steps can use:
 - **Preconditions**: Checked before execution; step fails if precondition is not met
@@ -229,8 +233,10 @@ steps:
     args:                                 # Optional: Command arguments as array
       - "--flag"
       - "value"
-    depends:                              # Optional: Dependencies on other steps
+    depends:                              # Optional: Dependencies on other steps (data coupling)
       - "previous_step"
+    after:                                # Optional: Ordering constraint — run after this step
+      - "another_step"                    #   AND all of its transitive dependents complete
     preconditions:                        # Optional: Must pass before execution
       - predicate: "test -f file.txt"
         expected: ""
@@ -275,6 +281,7 @@ The `examples/` directory contains several workflow examples demonstrating vario
 - `args-workflow.yaml` - Using command arguments
 - `script-workflow.yaml` - Using shell scripts with params and output variables
 - `single-workflow.yaml` - Minimal single-step workflow
+- `after-workflow.yaml` - Using `depends` and `after` together to express both data dependencies and pure ordering constraints
 
 ## Example Workflow Execution
 
