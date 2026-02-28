@@ -9,6 +9,7 @@ type Node struct {
 	Script          string       // Script to run for the step (multiline string)
 	Args            []string     // Arguments for the command
 	Depends         []string     // Steps this step depends on
+	After           []string     // Steps whose entire subtree (step + all dependents) must complete before this step runs
 	Preconditions   []Condition  // Preconditions for this step
 	When            *Condition   // Optional condition to determine if the step should be executed
 	RetryPolicy     *RetryPolicy // Optional retry policy for the step
@@ -59,4 +60,25 @@ func (d *DAG) GetNodes() map[string]*Node {
 // GetEdges returns all edges in the DAG.
 func (d *DAG) GetEdges() map[string][]string {
 	return d.Edges
+}
+
+// descendants returns all nodes reachable from nodeName via the Edges map
+// (i.e., nodeName itself plus all nodes that transitively depend on it).
+func (d *DAG) descendants(nodeName string) []string {
+	visited := make(map[string]bool)
+	var result []string
+
+	var dfs func(string)
+	dfs = func(name string) {
+		if visited[name] {
+			return
+		}
+		visited[name] = true
+		result = append(result, name)
+		for _, child := range d.Edges[name] {
+			dfs(child)
+		}
+	}
+	dfs(nodeName)
+	return result
 }

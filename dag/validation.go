@@ -16,6 +16,15 @@ func (d *DAG) Validate() error {
 		}
 	}
 
+	// Check that all `after` references exist
+	for _, node := range d.Nodes {
+		for _, afterStep := range node.After {
+			if _, exists := d.Nodes[afterStep]; !exists {
+				return errors.New("after reference \"" + afterStep + "\" does not exist for node \"" + node.Name + "\"")
+			}
+		}
+	}
+
 	// Check that each node has either Command or Script, but not both
 	for _, node := range d.Nodes {
 		hasCommand := node.Command != ""

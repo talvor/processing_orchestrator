@@ -39,6 +39,7 @@ type Step struct {
 	Script          string       `yaml:"script,omitempty"`            // Script to run for the step (multiline YAML string)
 	Args            []string     `yaml:"args,omitempty"`              // Arguments for the command
 	Depends         []string     `yaml:"depends"`                     // Steps this step depends on
+	After           []string     `yaml:"after,omitempty"`             // Steps whose entire subtree must complete before this step runs
 	Preconditions   []Condition  `yaml:"preconditions,omitempty"`     // Preconditions for this step
 	When            *Condition   `yaml:"when,omitempty"`              // Optional condition to determine if the step should be executed
 	RetryPolicy     *RetryPolicy `yaml:"retry_policy,omitempty"`      // Optional retry policy for the step
@@ -81,6 +82,7 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 			Script:          step.Script,
 			Args:            step.Args,
 			Depends:         step.Depends,
+			After:           step.After,
 			Description:     step.Description,
 			Preconditions:   step.Preconditions,
 			When:            step.When,
@@ -92,6 +94,34 @@ func LoadDAGFromYAML(filePath string) (*DAG, error) {
 		dag.Nodes[step.Name] = node
 		for _, dep := range step.Depends {
 			dag.Edges[dep] = append(dag.Edges[dep], step.Name)
+		}
+	}
+
+	// Second pass: resolve `after` fields.
+	// For each step with `after: [X]`, find all descendants of X (X plus all nodes
+	// that transitively depend on X) and add them as explicit dependencies so that
+	// the step runs only after the entire subtree rooted at X has completed.
+	for _, step := range config.Steps {
+		if len(step.After) == 0 {
+			continue
+		}
+
+		node := dag.Nodes[step.Name]
+
+		// Build a set of existing depends to avoid duplicates.
+		existingDepends := make(map[string]bool, len(node.Depends))
+		for _, dep := range node.Depends {
+			existingDepends[dep] = true
+		}
+
+		for _, afterStep := range step.After {
+			for _, desc := range dag.descendants(afterStep) {
+				if !existingDepends[desc] && desc != step.Name {
+					existingDepends[desc] = true
+					node.Depends = append(node.Depends, desc)
+					dag.Edges[desc] = append(dag.Edges[desc], step.Name)
+				}
+			}
 		}
 	}
 
