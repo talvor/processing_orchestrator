@@ -11,13 +11,13 @@ include make/localstack.mk
 .PHONY: go
 go:
 	@subcmd="$(filter-out $@,$(MAKECMDGOALS))"; \
-	[ -n "$$subcmd" ] || { echo "Usage: make go <cmd>"; echo "Available: build, build-cli, build-sqs-consumer, clean, test, start-sqs-consumer, send-test-message"; exit 1; }; \
+	[ -n "$$subcmd" ] || { echo "Usage: make go <cmd>"; echo "Available: build, build-cli, build-sqs-consumer, clean, test, send-test-message"; exit 1; }; \
 	$(MAKE) go-$$subcmd
 
 .PHONY: docker
 docker:
 	@subcmd="$(filter-out $@,$(MAKECMDGOALS))"; \
-	[ -n "$$subcmd" ] || { echo "Usage: make docker <cmd>"; echo "Available: build"; exit 1; }; \
+	[ -n "$$subcmd" ] || { echo "Usage: make docker <cmd>"; echo "Available: build, start, stop"; exit 1; }; \
 	$(MAKE) docker-$$subcmd
 
 .PHONY: terraform
@@ -31,6 +31,16 @@ localstack:
 	@subcmd="$(filter-out $@,$(MAKECMDGOALS))"; \
 	[ -n "$$subcmd" ] || subcmd="up"; \
 	$(MAKE) localstack-$$subcmd
+
+.PHONY: send-test-message
+send-test-message:
+	@echo "Current directory: $(CURRENT_DIR)"
+	@echo "Sending test message to SQS queue..."
+	@export AWS_ACCESS_KEY_ID=test && \
+	export AWS_SECRET_ACCESS_KEY=test && \
+	aws --endpoint-url=http://localhost:4566 --region us-east-1 sqs send-message \
+	  --queue-url http://localhost:4566/000000000000/test-workflow-queue \
+		--message-body '{"workflow_file":"/app/examples/video-workflow.yaml"}'
 
 # When a namespace is the first goal, prevent remaining goals from being
 # treated as standalone targets (they are sub-commands, not make goals).
@@ -47,16 +57,16 @@ help:
 	@echo "  make go build-sqs-consumer : Build the SQS consumer binary"
 	@echo "  make go clean              : Remove generated files"
 	@echo "  make go test               : Run all tests in the project"
-	@echo "  make go start-sqs-consumer : Start the SQS consumer with Localstack configuration"
-	@echo "  make go send-test-message  : Send a test message to the SQS queue"
 	@echo "  make localstack            : Start Localstack and apply Terraform config (combined)"
 	@echo "  make localstack start      : Start Localstack container"
-	@echo "  make localstack setup-queue: Create SQS queue in Localstack (legacy, use terraform apply)"
 	@echo "  make localstack stop       : Stop and remove Localstack container"
 	@echo "  make terraform init        : Initialise OpenTofu in the terraform/ directory"
 	@echo "  make terraform plan        : Show Terraform plan for LocalStack SQS resources"
 	@echo "  make terraform apply       : Apply Terraform config to create SQS queues in LocalStack"
 	@echo "  make terraform destroy     : Destroy Terraform-managed SQS resources in LocalStack"
 	@echo "  make docker build          : Build the Docker image for the SQS consumer"
+	@echo "  make docker start          : Start the SQS consumer using Docker Compose"
+	@echo "  make docker stop           : Stop the SQS consumer Docker container"
+	@echo "  make send-test-message		  : Send a test message to the SQS queue"
 	@echo "  help                       : Display this help message"
 

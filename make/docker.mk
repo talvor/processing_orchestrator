@@ -14,3 +14,8 @@ docker-start:
 docker-stop:
 	@echo "Stopping SQS consumer..."
 	@docker compose down
+
+.PHONY: docker-logs
+docker-logs:
+	@echo "View SQS consumer logs..."
+	@docker compose logs -f
