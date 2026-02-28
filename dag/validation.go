@@ -25,15 +25,12 @@ func (d *DAG) Validate() error {
 		}
 	}
 
-	// Check that each node has either Command or Script, but not both
+	// Check that each node has at most one of Command or Script.
+	// A node with neither is treated as a noop step.
 	for _, node := range d.Nodes {
 		hasCommand := node.Command != ""
 		hasScript := node.Script != ""
-		
-		if !hasCommand && !hasScript {
-			return errors.New("node \"" + node.Name + "\" must have either 'command' or 'script' specified")
-		}
-		
+
 		if hasCommand && hasScript {
 			return errors.New("node \"" + node.Name + "\" cannot have both 'command' and 'script' specified")
 		}
