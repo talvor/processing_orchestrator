@@ -1,4 +1,7 @@
-# Go targets
+# Go configuration
+CLI_BINARY_NAME=processing_pipeline
+SQS_CONSUMER_BINARY_NAME=sqs_consumer
+BIN_DIR=./bin
 
 .PHONY: go-build
 go-build: go-build-cli go-build-sqs-consumer

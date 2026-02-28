@@ -1,23 +1,34 @@
 steps:
-  - name: "prerequisite"
-    command: "mkdir -p output"
-  - name: "download"
-    command: "curl -o output/original https://download.samplelib.com/mp4/sample-5s.mp4"
+  - name: generate_id
+    command: "uuidgen"
+    output:
+      stdout: unique_id
+
+  - name: create_output_dir
+    command: "mkdir -p output/$unique_id && echo 'output/$unique_id'"
     depends:
-      - prerequisite
+      - generate_id
+    output:
+      stdout: output_dir
+
+  - name: "download"
+    command: "curl -o $output_dir/original https://download.samplelib.com/mp4/sample-5s.mp4"
+    depends:
+      - create_output_dir
+
   - name: "transcode"
-    command: "ffmpeg -i output/original -c:v libx264 -crf 20 -preset medium -c:a aac output/result.mp4"
+    command: "ffmpeg -i $output_dir/original -c:v libx264 -crf 20 -preset medium -c:a aac $output_dir/result.mp4"
     depends:
       - download
   - name: "grab_poster"
-    command: "ffmpeg -ss 00:00:01 -i output/original -frames:v 1 output/poster.png"
+    command: "ffmpeg -ss 00:00:01 -i $output_dir/original -frames:v 1 $output_dir/poster.png"
     depends:
       - download
   - name: "thumbnail_320"
-    command: "convert output/poster.png -thumbnail 320x output/thumbnail_320.png"
+    command: "convert $output_dir/poster.png -thumbnail 320x $output_dir/thumbnail_320.png"
     depends:
       - grab_poster
   - name: "thumbnail_640"
-    command: "convert output/poster.png -thumbnail 640x output/thumbnail_640.png"
+    command: "convert $output_dir/poster.png -thumbnail 640x $output_dir/thumbnail_640.png"
     depends:
       - grab_poster

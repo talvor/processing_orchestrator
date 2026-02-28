@@ -1,20 +1,4 @@
-# Makefile for building the Go binaries
-
-CLI_BINARY_NAME=processing_pipeline
-SQS_CONSUMER_BINARY_NAME=sqs_consumer
-BIN_DIR=./bin
 CURRENT_DIR=$(shell pwd)
-
-# Localstack configuration
-LOCALSTACK_CONTAINER_NAME=processing-orchestrator-localstack
-LOCALSTACK_PORT=4566
-SQS_QUEUE_NAME=test-workflow-queue
-AWS_REGION=us-east-1
-LOCALSTACK_ENDPOINT=http://localhost:$(LOCALSTACK_PORT)
-
-# Terraform configuration
-TERRAFORM_DIR=./terraform
-MAX_RECEIVE_COUNT=5
 
 include make/go.mk
 include make/docker.mk

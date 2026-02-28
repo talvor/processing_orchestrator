@@ -1,5 +1,8 @@
-# Terraform targets
+# Terraform configuration
+TERRAFORM_DIR=./terraform
+MAX_RECEIVE_COUNT=5
 
+# Terraform targets
 .PHONY: terraform-init
 terraform-init:
 	@echo "Initialising Terraform..."

@@ -1,5 +1,12 @@
-# Localstack targets
+# Localstack configuration
+LOCALSTACK_CONTAINER_NAME=processing-orchestrator-localstack
+LOCALSTACK_PORT=4566
+LOCALSTACK_ENDPOINT=http://localhost:$(LOCALSTACK_PORT)
 
+SQS_QUEUE_NAME=test-workflow-queue
+AWS_REGION=us-east-1
+
+# Localstack targets
 .PHONY: localstack-start
 localstack-start:
 	@echo "Starting Localstack container..."

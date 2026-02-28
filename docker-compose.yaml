@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   sqs-consumer:
-    image: sqs-consumer:latest # Replace with your actual image
+    image: local/sqs-consumer:latest # Replace with your actual image
     environment:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
